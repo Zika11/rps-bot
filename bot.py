@@ -1,990 +1,742 @@
-import os, random, asyncio, json, logging, threading
-from datetime import datetime, date, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    ContextTypes, MessageHandler, filters
-)
-from telegram import error as tg_error
-import db
-from flask import Flask, jsonify, render_template_string
+import os, json, threading, time
+from datetime import datetime, timedelta
+import gspread
+from google.oauth2.service_account import Credentials
 
-# ── إعدادات التسجيل ─────────────────────────────────────────
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+SHEET_ID = "13Hy-NBQ8ZRFbcbzWB056Pbi1b2w_0OjWM5VByldeiCU"
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
 
-# ── الثوابت (من البيئة أو افتراضية) ─────────────────────────
-TOKEN = os.environ.get("BOT_TOKEN")
-if not TOKEN:
-    raise ValueError("❌ BOT_TOKEN غير موجود!")
+_client = None
+_client_lock = threading.Lock()
 
-FOUNDER_ID = int(os.environ.get("FOUNDER_ID", "1232067711"))
+def get_client():
+    global _client
+    if _client is not None:
+        return _client
+    with _client_lock:
+        if _client is not None:
+            return _client
+        creds_json = os.environ.get("GOOGLE_CREDS")
+        if not creds_json:
+            raise EnvironmentError("❌ GOOGLE_CREDS غير موجود في متغيرات البيئة.")
+        creds_dict = json.loads(creds_json)
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        _client = gspread.authorize(creds)
+        return _client
 
-# ─ـ ثوابت اللعبة ───────────────────────────────────────────
-CHOICES = {"rock": "🪨 حجر", "paper": "📄 ورقة", "scissors": "✂️ مقص"}
-WIN_MAP = {"rock": "scissors", "scissors": "paper", "paper": "rock"}
-THEME_ICONS = {
-    "theme_1": CHOICES,
-    "theme_2": {"rock":"🟡 حجر","paper":"🟨 ورقة","scissors":"🟧 مقص"},
-    "theme_3": {"rock":"🔥 حجر","paper":"🌪️ ورقة","scissors":"💧 مقص"},
-    "theme_4": {"rock":"🌍 حجر","paper":"🌟 ورقة","scissors":"🌙 مقص"}
-}
-CHOICES_SPOCK = {"rock": "🪨", "paper": "📄", "scissors": "✂️", "lizard": "🦎", "spock": "🖖"}
-WIN_MAP_SPOCK = {
-    "scissors": ["paper", "lizard"], "paper": ["rock", "spock"],
-    "rock": ["lizard", "scissors"], "lizard": ["spock", "paper"],
-    "spock": ["scissors", "rock"]
-}
-
-# ─ـ إعدادات اللعبة ─────────────────────────────────────────
-GAME_TIMEOUT = 120          # ثواني
-CHANNEL_ROUND_INTERVAL = 120 # ثواني
-MAX_STREAK_REWARD = 100
-MIN_STREAK_MULTIPLIER = 10
-MAX_STORY_LEVEL = 3
-STORY_LEVELS = {
-    1: {"boss": "الرجل الحجري", "emoji": "🗿", "story": "في مملكة الأحجار..."},
-    2: {"boss": "ملك الورق", "emoji": "📜", "story": "بعد هزيمة الرجل الحجري..."},
-    3: {"boss": "سيد المقصات", "emoji": "⚔️", "story": "أقوى زعيم في المملكة..."}
-}
-
-# ─ـ أقفال للبيانات المشتركة ────────────────────────────────
-active_games_lock = asyncio.Lock()
-pending_matches_lock = asyncio.Lock()
-channel_games_lock = asyncio.Lock()
-channel_tasks_lock = asyncio.Lock()
-
-# ─ـ هياكل البيانات المشتركة ─────────────────────────────────
-pending_matches = []
-active_games = {}
-channel_tasks = {}
-channel_games = {}
-channel_last_play = {}
-
-# ─ـ دعم متعدد اللغات ──────────────────────────────────────
-translations = {}
-def load_translations():
-    for lang in ["ar", "en"]:
-        with open(f"lang/{lang}.json", "r", encoding="utf-8") as f:
-            translations[lang] = json.load(f)
-
-def _(key, user_id):
-    u = db.get_user(user_id)
-    lang = u.get("language", "ar") if u else "ar"
-    return translations.get(lang, {}).get(key, key)
-
-# ─ـ Flask Dashboard ──────────────────────────────────────────
-flask_app = Flask(__name__)
-
-@flask_app.route('/api/stats')
-def api_stats():
-    users_count = len(db._cache["users"])
-    clans_count = len(db._cache["clans"])
-    active_channels = len(db.get_active_channels())
-    avg_rating, count = db.get_avg_rating()
-    return jsonify({
-        "users": users_count, "clans": clans_count,
-        "channels": active_channels, "avg_rating": avg_rating,
-        "rating_count": count
-    })
-
-@flask_app.route('/api/leaderboard')
-def api_leaderboard():
-    return jsonify(db.get_leaderboard(20))
-
-@flask_app.route('/')
-def dashboard():
-    html = """<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>لوحة تحكم البوت</title></head>
-    <body style="font-family:sans-serif;max-width:800px;margin:auto;">
-        <h1>👑 لوحة تحكم البوت</h1>
-        <div id="stats"></div>
-        <h2>🏆 التصنيف</h2>
-        <table id="leaderboard" border="1" width="100%"></table>
-        <script>
-            fetch('/api/stats').then(r=>r.json()).then(d=>{
-                document.getElementById('stats').innerHTML =
-                    `<p>👥 المستخدمين: ${d.users} | 🗡️ العشائر: ${d.clans} | 📺 القنوات: ${d.channels} | ⭐ التقييم: ${d.avg_rating}/50 (${d.rating_count})</p>`;
-            });
-            fetch('/api/leaderboard').then(r=>r.json()).then(d=>{
-                let html = '<tr><th>الترتيب</th><th>الاسم</th><th>النقاط</th></tr>';
-                d.forEach((u,i)=>html+=`<tr><td>${i+1}</td><td>${u.name}</td><td>${u.points}</td></tr>`);
-                document.getElementById('leaderboard').innerHTML = html;
-            });
-        </script>
-    </body></html>"""
-    return render_template_string(html)
-
-def run_flask():
-    flask_app.run(host='0.0.0.0', port=5000, debug=False)
-
-# ─ـ Redis Caching (اختياري) ─ـ
-try:
-    import redis
-    redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
-    redis_client.ping()
-except:
-    redis_client = None
-
-def cache_get(key):
-    if redis_client:
-        data = redis_client.get(key)
-        if data: return json.loads(data)
-    return None
-
-def cache_set(key, value, ttl=300):
-    if redis_client:
-        redis_client.set(key, json.dumps(value), ex=ttl)
-
-def get_result(p1, p2): return "draw" if p1==p2 else ("win" if WIN_MAP[p1]==p2 else "loss")
-def is_founder(user_id): return user_id == FOUNDER_ID
-
-def get_choices_for_user(user_id):
-    u = db.get_user(user_id)
-    theme = u.get("theme","theme_1") if u else "theme_1"
-    return THEME_ICONS.get(theme, CHOICES)
-
-def get_all_user_ids():
-    try: return list(db._cache["users"].keys())
-    except Exception as e:
-        logging.error(f"خطأ في جلب معرفات المستخدمين: {e}")
-        return []
-
-# ─ـ Keyboards ─ـ
-def main_menu_keyboard(user_id=None):
-    rows = [
-        [InlineKeyboardButton("🎮 العب الآن", callback_data="menu_play")],
-        [InlineKeyboardButton("🎁 المكافأة اليومية", callback_data="daily_bonus")],
-        [InlineKeyboardButton("🏆 التصنيف", callback_data="menu_rank"), InlineKeyboardButton("🗡️ العشائر", callback_data="menu_clans")],
-        [InlineKeyboardButton("🎁 المهام", callback_data="menu_tasks"), InlineKeyboardButton("🛒 المتجر", callback_data="menu_shop")],
-        [InlineKeyboardButton("👥 الأصدقاء", callback_data="menu_friends"), InlineKeyboardButton("📺 القنوات", callback_data="menu_channels")],
-        [InlineKeyboardButton("👤 حسابي", callback_data="menu_profile"), InlineKeyboardButton("❓ طريقة اللعب", callback_data="menu_howto")],
-        [InlineKeyboardButton("⭐ تقييم البوت", callback_data="menu_rate"), InlineKeyboardButton("💎 دعم البوت", callback_data="menu_support")],
-        [InlineKeyboardButton("🔗 دعوة صديق", callback_data="menu_referral"), InlineKeyboardButton("🏆 انضم للبطولة", callback_data="join_tournament")],
-    ]
-    if user_id and is_founder(user_id):
-        rows.append([InlineKeyboardButton("👑 لوحة المؤسس", callback_data="founder_panel")])
-    return InlineKeyboardMarkup(rows)
-
-def back_btn(target="menu_main"): return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=target)]])
-
-def play_menu_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🤖 لعب فردي", callback_data="play_solo")],
-        [InlineKeyboardButton("👥 لعب مع صديق", callback_data="play_friend")],
-        [InlineKeyboardButton("🎲 لعب عشوائي", callback_data="play_random")],
-        [InlineKeyboardButton("📺 لعب في قناة/جروب", callback_data="play_channel")],
-        [InlineKeyboardButton("🖖 Spock", callback_data="play_spock")],
-        [InlineKeyboardButton("📖 وضع القصة", callback_data="story_mode")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="menu_main")],
-    ])
-
-def solo_keyboard(user_id=None):
-    choices = get_choices_for_user(user_id)
-    return InlineKeyboardMarkup([[InlineKeyboardButton(v, callback_data=f"solo_{k}") for k,v in choices.items()]])
-
-def mp_keyboard(game_id):
-    return InlineKeyboardMarkup([[InlineKeyboardButton(v, callback_data=f"mp_{game_id}_{k}") for k,v in CHOICES.items()]])
-
-def channel_keyboard(channel_id):
-    return InlineKeyboardMarkup([[InlineKeyboardButton(v, callback_data=f"ch_{channel_id}_{k}") for k,v in CHOICES.items()]])
-
-def stars_keyboard():
-    options = [1,5,10,20,30,40,50]
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"{'⭐'*(min(s//10+1,3))} {s}", callback_data=f"rate_{s}") for s in options[:4]],
-        [InlineKeyboardButton(f"{'⭐'*(min(s//10+1,3))} {s}", callback_data=f"rate_{s}") for s in options[4:]],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="menu_main")]
-    ])
-
-def founder_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ إضافة نقاط", callback_data="f_addpts"), InlineKeyboardButton("➖ خصم نقاط", callback_data="f_subpts")],
-        [InlineKeyboardButton("🚫 حظر لاعب", callback_data="f_ban"), InlineKeyboardButton("✅ فك حظر", callback_data="f_unban")],
-        [InlineKeyboardButton("📢 رسالة جماعية", callback_data="f_broadcast")],
-        [InlineKeyboardButton("🛒 إدارة المتجر", callback_data="f_shop"), InlineKeyboardButton("🎁 إدارة المهام", callback_data="f_tasks")],
-        [InlineKeyboardButton("📊 الإحصائيات", callback_data="f_stats"), InlineKeyboardButton("⭐ التقييمات", callback_data="f_ratings")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="menu_main")],
-    ])
-
-# ─ـ دوال اللعبة الأساسية ─────────────────────────────────────
-async def game_timeout(game_id, context):
-    await asyncio.sleep(GAME_TIMEOUT)
-    async with active_games_lock:
-        game = active_games.get(game_id)
-        if game:
-            try:
-                await context.bot.send_message(game["p1"], "⌛ انتهت صلاحية التحدي.")
-                if game.get("p2"):
-                    await context.bot.send_message(game["p2"], "⌛ انتهت صلاحية التحدي.")
-            except Exception as e:
-                logging.error(f"فشل إرسال انتهاء صلاحية التحدي: {e}")
-            del active_games[game_id]
-
-# ─ـ المهام والعشائر ─ـ
-async def check_and_complete_task(user_id, task_id, bot_context, progress_increment=1):
-    u = db.get_user(user_id)
-    if not u: return False
-    today = str(date.today())
-    progress_data = u.get("tasks_progress")
-    if progress_data:
-        try: progress = json.loads(progress_data)
-        except Exception as e:
-            logging.error(f"تقدم مهمة تالف لـ {user_id}: {e}")
-            progress = {"date": today, "tasks":{}}
-    else: progress = {"date": today, "tasks":{}}
-    if progress.get("date") != today: progress = {"date": today, "tasks":{}}
-    tasks_progress = progress.setdefault("tasks", {})
-    current = tasks_progress.get(task_id, 0) + progress_increment
-    tasks_progress[task_id] = current
-    all_tasks = db.get_tasks()
-    task_def = next((t for t in all_tasks if t["task_id"]==task_id), None)
-    rewarded = False
-    if task_def:
-        required = {"task_1":5,"task_2":3,"task_3":1,"task_4":1,"task_5":10}.get(task_id,1)
-        if current >= required and not tasks_progress.get(f"{task_id}_done"):
-            pts_reward = int(task_def["points_reward"])
-            db.update_user(user_id, points=int(u.get("points",0))+pts_reward)
-            tasks_progress[f"{task_id}_done"] = True
-            try:
-                await bot_context.bot.send_message(user_id, f"🎉 أكملت مهمة *{task_def['description']}* وحصلت على {pts_reward} نقطة!", parse_mode="Markdown")
-            except Exception as e:
-                logging.error(f"فشل إرسال إشعار مهمة لـ {user_id}: {e}")
-            rewarded = True
-    db.update_user(user_id, tasks_progress=json.dumps(progress))
-    return rewarded
-
-def add_clan_points(user_id, amount):
-    u = db.get_user(user_id)
-    if not u or not u.get("clan"): return
-    clan = db.get_clan(u["clan"])
-    if not clan: return
-    current_pts = int(clan.get("points",0) or 0) + amount
-    db.update_clan(u["clan"], points=current_pts)
-    if db.get_active_clan_war():
-        db.add_clan_war_points(u["clan"], amount)
-
-# ─ـ المكافأة اليومية ─ـ
-async def claim_daily(user_id, context):
-    u = db.get_user(user_id)
-    if not u: return ""
-    today = str(date.today())
-    if u.get("daily_claimed") and u.get("last_claim_date") == today:
-        return "✅ استلمت مكافأتك النهارده خلاص! تعالى بكره."
-    streak = db._safe_int(u.get("streak_count"))
-    last_date = u.get("last_claim_date")
-    yesterday = str(date.today() - timedelta(days=1))
-    if last_date == yesterday: streak += 1
-    else: streak = 1
-    reward = min(MIN_STREAK_MULTIPLIER * streak, MAX_STREAK_REWARD)
-    db.update_user(user_id, streak_count=streak, last_claim_date=today, daily_claimed=True,
-                   points=int(u.get("points",0)) + reward)
-    return f"🎁 مكافأة اليوم {streak}! حصلت على {reward} نقطة. النهارده يومك رقم {streak} على التوالي!"
-
-# ─ـ الإنجازات ─ـ
-async def check_achievements(user_id, context):
-    u = db.get_user(user_id)
-    if not u: return
-    all_achs = db.get_achievements()
-    earned = (u.get("achievements","") or "").split(",")
-    for ach in all_achs:
-        if ach["ach_id"] in earned: continue
-        field = ach["condition_field"]; needed = ach["condition_value"]; current = 0
-        if field == "wins": current = int(u.get("wins",0))
-        elif field == "losses": current = int(u.get("losses",0))
-        elif field == "draws": current = int(u.get("draws",0))
-        elif field == "points": current = int(u.get("points",0))
-        elif field == "streak": current = int(u.get("streak_count",0))
-        elif field == "referrals": current = int(u.get("referrals",0))
-        elif field == "solo_games": current = int(u.get("solo_games",0))
-        elif field == "random_games": current = int(u.get("random_games",0))
-        elif field == "friend_games": current = int(u.get("friend_games",0))
-        elif field == "channel_games": current = int(u.get("channel_games",0))
-        elif field == "items_owned":
-            owned = (u.get("shop_items","") or "").split(",")
-            current = len([o for o in owned if o])
-        elif field == "clan_created":
-            for clan in db.get_all_clans():
-                if str(clan["leader_id"]) == str(user_id): current = 1; break
-        elif field == "clan_joined": current = 1 if u.get("clan") else 0
-        elif field == "tournament_win": current = int(u.get("tournament_wins",0))
-        elif field == "rated": current = 1 if str(user_id) in db._cache["ratings"] else 0
-        elif field == "achievements_count": current = len(earned)
-        elif field == "rock_used": current = int(u.get("rock_used",0))
-        elif field == "win_streak": current = int(u.get("win_streak",0))
-        elif field == "bo3_wins": current = int(u.get("bo3_wins",0))
-        elif field == "bo3_losses": current = int(u.get("bo3_losses",0))
-        elif field == "login_streak": current = int(u.get("login_streak",0))
-        elif field == "days_since_register": current = int(u.get("days_since_register",0))
-        elif field == "channel_win": current = int(u.get("channel_games",0))
-        elif field == "random_win": current = int(u.get("random_games",0))
-        elif field == "night_play":
-            if datetime.now().hour < 5: current = 1
-        if current >= needed:
-            if db.add_achievement(user_id, ach["ach_id"]):
-                try:
-                    await context.bot.send_message(user_id, f"🎖️ إنجاز جديد: {ach['icon']} *{ach['name']}* - {ach['description']}", parse_mode="Markdown")
-                except Exception as e:
-                    logging.error(f"فشل إرسال إنجاز لـ {user_id}: {e}")
-
-# ─ـ القنوات ─ـ
-async def channel_loop(chat_id, context):
-    while True:
-        await asyncio.sleep(CHANNEL_ROUND_INTERVAL)
-        async with channel_tasks_lock:
-            if chat_id not in channel_tasks: break
-        async with channel_games_lock:
-            game = channel_games.get(chat_id)
-            if game and datetime.now() - game["created"] > timedelta(seconds=90):
-                await cancel_channel_game(chat_id, context)
-            if chat_id in channel_games: continue
-            try:
-                msg = await context.bot.send_message(chat_id, "🎮 *جولة جديدة بين عضوين!* أول واحد يضغط هيبقى اللاعب الأول 👇", parse_mode="Markdown", reply_markup=channel_keyboard(chat_id))
-                channel_games[chat_id] = {"player1":None,"choice1":None,"player2":None,"choice2":None,"message_id":msg.message_id,"created":datetime.now()}
-                channel_last_play[chat_id] = datetime.now()
-            except (tg_error.Forbidden, tg_error.BadRequest, tg_error.ChatNotFound):
-                await stop_channel_internal(chat_id, context); break
-            except Exception as e:
-                logging.error(f"channel_loop {chat_id}: {e}")
-
-async def cancel_channel_game(channel_id, context, reason=""):
-    async with channel_games_lock:
-        game = channel_games.pop(channel_id, None)
-    if game:
+def get_sheet(name, retries=5):
+    client = get_client()
+    spreadsheet = None
+    for attempt in range(retries):
         try:
-            await context.bot.edit_message_text(chat_id=channel_id, message_id=game["message_id"], text=f"🚫 الجولة اتلغت{' - ' + reason if reason else ''}")
+            spreadsheet = client.open_by_key(SHEET_ID)
+            break
         except Exception as e:
-            logging.error(f"فشل إلغاء جولة القناة {channel_id}: {e}")
+            if "429" in str(e) and attempt < retries - 1:
+                wait = (attempt + 1) * 2
+                print(f"Quota exceeded, retrying in {wait}s...")
+                time.sleep(wait)
+            else:
+                raise e
 
-async def stop_channel_internal(chat_id, context):
-    async with channel_tasks_lock:
-        task = channel_tasks.pop(chat_id, None)
-    if task: task.cancel()
-    async with channel_games_lock:
-        channel_games.pop(chat_id, None)
-    db.remove_active_channel(chat_id)
+    for attempt in range(retries):
+        try:
+            return spreadsheet.worksheet(name)
+        except gspread.WorksheetNotFound:
+            ws = spreadsheet.add_worksheet(title=name, rows=1000, cols=20)
+            return ws
+        except Exception as e:
+            if "429" in str(e) and attempt < retries - 1:
+                wait = (attempt + 1) * 2
+                print(f"Quota exceeded on worksheet {name}, retrying in {wait}s...")
+                time.sleep(wait)
+            else:
+                raise e
 
-async def check_bot_permissions(chat_id, context):
-    try:
-        bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
-        if bot_member.status == 'administrator': return bot_member.can_send_messages if hasattr(bot_member, 'can_send_messages') else True
-        return True
-    except tg_error.Forbidden:
-        return False
-    except Exception as e:
-        logging.error(f"check_bot_permissions: {e}"); return False
+_cache = {
+    "users": {}, "clans": {}, "tasks": [], "shop": [], "ratings": {},
+    "channels": {},
+    "tournaments": None, "achievements": None,
+    "friends": {}, "friend_requests": {},
+    "group_challenges": None, "titles_shop": None, "themes_shop": None,
+    "events": None, "clan_wars": None
+}
+_dirty = {
+    "users": set(), "clans": set(), "ratings": set(), "tournaments": set()
+}
+_initialized = False
+_lock = threading.Lock()
+
+def _safe_int(val, default=0):
+    try: return int(val)
+    except: return default
+
+def _safe_bool(val, default=False):
+    if isinstance(val, bool): return val
+    if isinstance(val, str): return val.upper() == "TRUE"
+    return default
+
+def init_cache():
+    global _initialized
+    if _initialized: return
+    time.sleep(10)  # انتظر 10 ثوانٍ قبل أي طلب
+    _load_all()
+    with _lock: _initialized = True
+    t = threading.Thread(target=_sync_loop, daemon=True)
+    t.start()
+
+def _load_all():
+    _load_users()
+    time.sleep(2)
+    _load_clans()
+    time.sleep(2)
+    _load_tasks()
+    time.sleep(2)
+    _load_shop()
+    time.sleep(2)
+    _load_ratings()
+
+def _ensure_tournaments():
+    if _cache["tournaments"] is None:
+        _cache["tournaments"] = {}
+        _load_tournaments()
+
+def _ensure_achievements():
+    if _cache["achievements"] is None:
+        _load_achievements()
+
+def _ensure_titles():
+    if _cache["titles_shop"] is None:
+        _load_titles()
+
+def _ensure_themes():
+    if _cache["themes_shop"] is None:
+        _load_themes()
+
+def _ensure_group_challenges():
+    if _cache["group_challenges"] is None:
+        _cache["group_challenges"] = {}
+        _load_group_challenges()
+
+def _ensure_events():
+    if _cache["events"] is None:
+        _cache["events"] = []
+        _load_events()
+
+def _ensure_clan_wars():
+    if _cache["clan_wars"] is None:
+        _cache["clan_wars"] = {}
+        _load_clan_wars()
+
+# ... (باقي دوال التحميل ودوال API كما هي تمامًا في الرد السابق، لم تتغير)
+# تم نسخها كاملة هنا لضمان عدم الاختصار
+
+def _load_users():
+    ws = get_sheet("users")
+    if not ws.row_values(1):
+        ws.append_row([
+            "user_id","name","username","points","clan","wins","losses","draws",
+            "rating","daily_tasks","shop_items","tasks_progress","referrals",
+            "banned","referred","streak_count","last_claim_date","daily_claimed",
+            "achievements","solo_games","random_games","friend_games","channel_games",
+            "tournament_wins","rock_used","paper_used","scissors_used","win_streak",
+            "bo3_wins","bo3_losses","login_streak","days_since_register","gems",
+            "title","theme","language","move_history","story_level"
+        ])
+        return
+    records = ws.get_all_records()
+    for r in records:
+        uid = str(r["user_id"])
+        _cache["users"][uid] = {
+            "user_id": uid,
+            "name": r.get("name",""),
+            "username": r.get("username",""),
+            "points": _safe_int(r.get("points")),
+            "clan": r.get("clan",""),
+            "wins": _safe_int(r.get("wins")),
+            "losses": _safe_int(r.get("losses")),
+            "draws": _safe_int(r.get("draws")),
+            "rating": _safe_int(r.get("rating")),
+            "daily_tasks": r.get("daily_tasks",""),
+            "shop_items": r.get("shop_items",""),
+            "tasks_progress": r.get("tasks_progress",""),
+            "referrals": _safe_int(r.get("referrals")),
+            "banned": _safe_bool(r.get("banned")),
+            "referred": _safe_bool(r.get("referred")),
+            "streak_count": _safe_int(r.get("streak_count")),
+            "last_claim_date": r.get("last_claim_date",""),
+            "daily_claimed": _safe_bool(r.get("daily_claimed")),
+            "achievements": r.get("achievements",""),
+            "solo_games": _safe_int(r.get("solo_games")),
+            "random_games": _safe_int(r.get("random_games")),
+            "friend_games": _safe_int(r.get("friend_games")),
+            "channel_games": _safe_int(r.get("channel_games")),
+            "tournament_wins": _safe_int(r.get("tournament_wins")),
+            "rock_used": _safe_int(r.get("rock_used")),
+            "paper_used": _safe_int(r.get("paper_used")),
+            "scissors_used": _safe_int(r.get("scissors_used")),
+            "win_streak": _safe_int(r.get("win_streak")),
+            "bo3_wins": _safe_int(r.get("bo3_wins")),
+            "bo3_losses": _safe_int(r.get("bo3_losses")),
+            "login_streak": _safe_int(r.get("login_streak")),
+            "days_since_register": _safe_int(r.get("days_since_register")),
+            "gems": _safe_int(r.get("gems")),
+            "title": r.get("title",""),
+            "theme": r.get("theme","theme_1"),
+            "language": r.get("language","ar"),
+            "move_history": r.get("move_history","[]"),
+            "story_level": _safe_int(r.get("story_level"), 1)
+        }
+
+def _load_clans():
+    ws = get_sheet("clans")
+    if not ws.row_values(1):
+        ws.append_row(["clan_name","leader_id","members","points","description"])
+        return
+    records = ws.get_all_records()
+    for r in records:
+        name = r["clan_name"]
+        _cache["clans"][name] = {
+            "clan_name": name,
+            "leader_id": str(r.get("leader_id","")),
+            "members": str(r.get("members","")),
+            "points": _safe_int(r.get("points")),
+            "description": r.get("description","")
+        }
+
+def _load_tasks():
+    ws = get_sheet("tasks")
+    if not ws.row_values(1):
+        ws.append_row(["task_id","description","points_reward","type"])
+        default_tasks = [
+            ["task_1","العب 5 جولات فردية",50,"daily"],
+            ["task_2","اكسب 3 جولات متتالية",100,"daily"],
+            ["task_3","العب ضد صديق",75,"daily"],
+            ["task_4","العب في قناة",60,"daily"],
+            ["task_5","حقق 10 انتصارات إجمالية",200,"daily"],
+            ["clan_1","فوز العشيرة بـ 10 جولات",500,"clan"],
+            ["clan_2","ضم عضو جديد للعشيرة",300,"clan"],
+            ["clan_3","العشيرة تلعب 20 جولة",400,"clan"]
+        ]
+        ws.append_rows(default_tasks)
+        _cache["tasks"] = [{"task_id":r[0],"description":r[1],"points_reward":_safe_int(r[2]),"type":r[3]} for r in default_tasks]
+        return
+    _cache["tasks"] = [{"task_id":r["task_id"],"description":r["description"],"points_reward":_safe_int(r["points_reward"]),"type":r["type"]} for r in ws.get_all_records()]
+
+def _load_shop():
+    ws = get_sheet("shop")
+    if not ws.row_values(1):
+        ws.append_row(["item_id","name","description","price","emoji"])
+        default_items = [
+            ["item_1","درع الحجر","يحميك من الخسارة مرة واحدة",500,"🛡️"],
+            ["item_2","قفازات الورقة","ضاعف نقاطك للجولة القادمة",300,"🧤"],
+            ["item_3","مقص الأسطورة","شارة نادرة في ملفك",1000,"⚡"],
+            ["item_4","تاج البطل","لقب خاص بجانب اسمك",2000,"👑"],
+            ["item_5","حذاء السرعة","العب جولتين بدل واحدة",750,"👟"],
+            ["item_6","صندوق الكنز","يحتوي على جائزة عشوائية",2000,"🎁"]
+        ]
+        ws.append_rows(default_items)
+        _cache["shop"] = [{"item_id":r[0],"name":r[1],"description":r[2],"price":_safe_int(r[3]),"emoji":r[4]} for r in default_items]
+        return
+    _cache["shop"] = [{"item_id":r["item_id"],"name":r["name"],"description":r["description"],"price":_safe_int(r["price"]),"emoji":r["emoji"]} for r in ws.get_all_records()]
+
+def _load_ratings():
+    ws = get_sheet("ratings")
+    if not ws.row_values(1):
+        ws.append_row(["user_id","stars","comment"])
+        return
+    records = ws.get_all_records()
+    for r in records:
+        _cache["ratings"][str(r["user_id"])] = _safe_int(r.get("stars"))
+
+def _load_tournaments():
+    ws = get_sheet("tournaments")
+    if not ws.row_values(1):
+        ws.append_row(["tournament_id","status","players","rounds","winner_id","prize","created_at"])
+        return
+    records = ws.get_all_records()
+    for r in records:
+        tid = str(r["tournament_id"])
+        _cache["tournaments"][tid] = {
+            "tournament_id": tid, "status": r.get("status","open"),
+            "players": r.get("players",""), "rounds": r.get("rounds","[]"),
+            "winner_id": r.get("winner_id",""), "prize": _safe_int(r.get("prize",500)),
+            "created_at": r.get("created_at",str(datetime.now()))
+        }
+
+def _load_achievements():
+    ws = get_sheet("achievements")
+    if not ws.row_values(1):
+        ws.append_row(["ach_id","name","description","icon","condition_field","condition_value"])
+        default_achievements = [
+            ["ach_1","أول خطوة","سجل في البوت لأول مرة","🌟","registered","1"],
+            ["ach_2","المحارب","العب 10 جولات فردية","⚔️","solo_games","10"],
+            ["ach_3","الأسطورة","اكسب 50 جولة","👑","wins","50"],
+            ["ach_4","صياد النقاط","اجمع 5000 نقطة","💰","points","5000"],
+            ["ach_5","المغامر","العب 5 جولات عشوائية","🎲","random_games","5"],
+            ["ach_6","الصديق الوفي","العب 10 جولات مع أصدقاء","🤝","friend_games","10"],
+            ["ach_7","ملك القنوات","العب 20 جولة في القنوات","📺","channel_games","20"],
+            ["ach_8","النجم اليومي","احصل على مكافأة يومية 7 أيام متتالية","📅","streak","7"],
+            ["ach_9","المحترف","اكسب 3 جولات متتالية","🔥","win_streak","3"],
+            ["ach_10","بطل البطولة","فوز ببطولة","🏆","tournament_win","1"],
+            ["ach_11","الداعم","ادعُ 3 أصدقاء","📢","referrals","3"],
+            ["ach_12","الجامع","اجمع 10 بطاقات من المتجر","🎒","items_owned","10"],
+            ["ach_13","المقيّم","قيم البوت","⭐","rated","1"],
+            ["ach_14","مؤسس العشيرة","أنشئ عشيرة","🏛️","clan_created","1"],
+            ["ach_15","عضو العشيرة","انضم لعشيرة","👥","clan_joined","1"],
+            ["ach_16","البطل الخارق","اكسب 100 جولة","💪","wins","100"],
+            ["ach_17","مليونير النقاط","اجمع 50000 نقطة","💎","points","50000"],
+            ["ach_18","المغامر الأسطوري","العب 100 جولة عشوائية","🌍","random_games","100"],
+            ["ach_19","صديق الكل","العب 50 جولة مع أصدقاء","💖","friend_games","50"],
+            ["ach_20","ملك الشارات","اجمع 15 إنجاز","🎖️","achievements_count","15"],
+            ["ach_21","المقاتل الليلي","العب بعد منتصف الليل","🌙","night_play","1"],
+            ["ach_22","الصبور","اخسر 20 جولة","😅","losses","20"],
+            ["ach_23","المتوازن","تعادل في 10 جولات","⚖️","draws","10"],
+            ["ach_24","المثابر","ادخل البوت 5 أيام متتالية","🗓️","login_streak","5"],
+            ["ach_25","الوفي","استخدم البوت لمدة 30 يوم","📆","days_since_register","30"],
+            ["ach_26","المقامر","اربح جولة عشوائية","🎰","random_win","1"],
+            ["ach_27","السريع","اربح جولة في القناة","⚡","channel_win","1"],
+            ["ach_28","الخبير","اكسب 5 جولات BO3","🧠","bo3_wins","5"],
+            ["ach_29","المقاتل","اخسر جولة BO3","🥊","bo3_losses","1"],
+            ["ach_30","ملك الحجر","استخدم الحجر 50 مرة","🪨","rock_used","50"]
+        ]
+        ws.append_rows(default_achievements)
+        _cache["achievements"] = [{"ach_id":r[0],"name":r[1],"description":r[2],"icon":r[3],"condition_field":r[4],"condition_value":_safe_int(r[5])} for r in default_achievements]
+        return
+    _cache["achievements"] = [{"ach_id":r["ach_id"],"name":r["name"],"description":r["description"],"icon":r["icon"],"condition_field":r["condition_field"],"condition_value":_safe_int(r["condition_value"])} for r in ws.get_all_records()]
+
+def _load_titles():
+    ws = get_sheet("titles")
+    if not ws.row_values(1):
+        ws.append_row(["title_id","name","description","cost_gems"])
+        default_titles = [
+            ["title_1","المحارب","لقب أساسي",0],
+            ["title_2","الأسطورة","للفائزين بـ 100 جولة",50],
+            ["title_3","ملك الحجر","لمن استخدم الحجر 200 مرة",30],
+            ["title_4","الوفي","للأصدقاء المخلصين",20],
+            ["title_5","الخبير","للفائزين بـ 5 بطولات",100]
+        ]
+        ws.append_rows(default_titles)
+        _cache["titles_shop"] = [{"title_id":r[0],"name":r[1],"description":r[2],"cost_gems":_safe_int(r[3])} for r in default_titles]
+        return
+    _cache["titles_shop"] = [{"title_id":r["title_id"],"name":r["name"],"description":r["description"],"cost_gems":_safe_int(r["cost_gems"])} for r in ws.get_all_records()]
+
+def _load_themes():
+    ws = get_sheet("themes")
+    if not ws.row_values(1):
+        ws.append_row(["theme_id","name","description","cost_gems","icon_set"])
+        default_themes = [
+            ["theme_1","كلاسيكي","الشكل الافتراضي",0,"🪨📄✂️"],
+            ["theme_2","الذهب","رموز ذهبية",50,"🟡🟨🟧"],
+            ["theme_3","النار","رموز نارية",80,"🔥🌪️💧"],
+            ["theme_4","الفضاء","كواكب ونجوم",120,"🌍🌟🌙"]
+        ]
+        ws.append_rows(default_themes)
+        _cache["themes_shop"] = [{"theme_id":r[0],"name":r[1],"description":r[2],"cost_gems":_safe_int(r[3]),"icon_set":r[4]} for r in default_themes]
+        return
+    _cache["themes_shop"] = [{"theme_id":r["theme_id"],"name":r["name"],"description":r["description"],"cost_gems":_safe_int(r["cost_gems"]),"icon_set":r["icon_set"]} for r in ws.get_all_records()]
+
+def _load_group_challenges():
+    ws = get_sheet("group_challenges")
+    if not ws.row_values(1):
+        ws.append_row(["challenge_id","group_id","target_wins","prize","start_date","end_date","participants","winner_id"])
+        return
+    records = ws.get_all_records()
+    for r in records:
+        cid = r["challenge_id"]
+        _cache["group_challenges"][cid] = {
+            "challenge_id": cid, "group_id": r["group_id"],
+            "target_wins": _safe_int(r["target_wins"]), "prize": _safe_int(r["prize"]),
+            "start_date": r["start_date"], "end_date": r["end_date"],
+            "participants": r.get("participants","{}"), "winner_id": r.get("winner_id","")
+        }
+
+def _load_events():
+    ws = get_sheet("events")
+    if not ws.row_values(1):
+        ws.append_row(["event_id","name","start_date","end_date","special_tasks","special_bosses"])
+        return
+    records = ws.get_all_records()
+    for r in records:
+        _cache["events"].append({
+            "event_id": r["event_id"], "name": r["name"],
+            "start_date": r["start_date"], "end_date": r["end_date"],
+            "special_tasks": json.loads(r.get("special_tasks","[]")),
+            "special_bosses": json.loads(r.get("special_bosses","[]"))
+        })
+
+def _load_clan_wars():
+    ws = get_sheet("clan_wars")
+    if not ws.row_values(1):
+        ws.append_row(["war_id","start_date","end_date","clan_points","winner_clan"])
+        return
+    records = ws.get_all_records()
+    for r in records:
+        _cache["clan_wars"][r["war_id"]] = {
+            "war_id": r["war_id"], "start_date": r["start_date"],
+            "end_date": r["end_date"], "clan_points": json.loads(r.get("clan_points","{}")),
+            "winner_clan": r.get("winner_clan","")
+        }
+
+# ── دوال API (نفسها تمامًا، مع استدعاء _ensure_* حيث يلزم) ──
+def get_or_create_user(user_id, name, username):
+    if not _initialized: init_cache()
+    uid = str(user_id)
+    if uid not in _cache["users"]:
+        u = {
+            "user_id": uid, "name": name, "username": username or "",
+            "points":0,"clan":"","wins":0,"losses":0,"draws":0,"rating":0,
+            "daily_tasks":"","shop_items":"","tasks_progress":"","referrals":0,
+            "banned":False,"referred":False,"streak_count":0,"last_claim_date":"",
+            "daily_claimed":False,"achievements":"","solo_games":0,"random_games":0,
+            "friend_games":0,"channel_games":0,"tournament_wins":0,
+            "rock_used":0,"paper_used":0,"scissors_used":0,"win_streak":0,
+            "bo3_wins":0,"bo3_losses":0,"login_streak":0,"days_since_register":0,
+            "gems":0,"title":"","theme":"theme_1","language":"ar",
+            "move_history":"[]","story_level":1
+        }
+        _cache["users"][uid] = u
+        with _lock: _dirty["users"].add(uid)
+    return _cache["users"][uid]
+
+def update_user(user_id, **kwargs):
+    if not _initialized: init_cache()
+    uid = str(user_id)
+    if uid in _cache["users"]:
+        for k in ("points","wins","losses","draws","rating","referrals","streak_count",
+                  "solo_games","random_games","friend_games","channel_games",
+                  "tournament_wins","rock_used","paper_used","scissors_used",
+                  "win_streak","bo3_wins","bo3_losses","login_streak","days_since_register","gems","story_level"):
+            if k in kwargs: kwargs[k] = _safe_int(kwargs[k])
+        _cache["users"][uid].update(kwargs)
+        with _lock: _dirty["users"].add(uid)
+
+def get_user(user_id):
+    if not _initialized: init_cache()
+    return _cache["users"].get(str(user_id))
+
+def get_leaderboard(limit=10, period="all"):
+    if not _initialized: init_cache()
+    users = list(_cache["users"].values())
+    return sorted(users, key=lambda x: _safe_int(x.get("points")), reverse=True)[:limit]
+
+def get_clan(clan_name):
+    if not _initialized: init_cache()
+    return _cache["clans"].get(clan_name)
+
+def create_clan(clan_name, leader_id, description=""):
+    if not _initialized: init_cache()
+    c = {"clan_name": clan_name, "leader_id": str(leader_id), "members": str(leader_id), "points": 0, "description": description}
+    _cache["clans"][clan_name] = c
+    with _lock: _dirty["clans"].add(clan_name)
+
+def update_clan(clan_name, **kwargs):
+    if not _initialized: init_cache()
+    if clan_name in _cache["clans"]:
+        if "points" in kwargs: kwargs["points"] = _safe_int(kwargs["points"])
+        _cache["clans"][clan_name].update(kwargs)
+        with _lock: _dirty["clans"].add(clan_name)
+
+def get_all_clans():
+    if not _initialized: init_cache()
+    clans = list(_cache["clans"].values())
+    return sorted(clans, key=lambda x: _safe_int(x.get("points")), reverse=True)
+
+def get_tasks(task_type=None):
+    if not _initialized: init_cache()
+    if task_type: return [t for t in _cache["tasks"] if t["type"] == task_type]
+    return _cache["tasks"]
+
+def get_shop_items():
+    if not _initialized: init_cache()
+    return _cache["shop"]
+
+def add_rating(user_id, stars):
+    if not _initialized: init_cache()
+    uid = str(user_id)
+    _cache["ratings"][uid] = _safe_int(stars)
+    with _lock: _dirty["ratings"].add(uid)
+
+def get_avg_rating():
+    if not _initialized: init_cache()
+    ratings = list(_cache["ratings"].values())
+    if not ratings: return 0,0
+    return round(sum(ratings)/len(ratings),1), len(ratings)
+
+def is_banned(user_id):
+    u = get_user(user_id)
+    return u.get("banned", False) if u else False
+
+def ban_user(user_id): update_user(user_id, banned=True)
+def unban_user(user_id): update_user(user_id, banned=False)
+def has_been_referred(user_id):
+    u = get_user(user_id)
+    return u.get("referred", False) if u else False
+def mark_referred(user_id): update_user(user_id, referred=True)
+
+def add_active_channel(channel_id, title):
+    if not _initialized: init_cache()
+    with _lock: _cache["channels"][str(channel_id)] = {"id": channel_id, "title": title}
+
+def remove_active_channel(channel_id):
+    with _lock: _cache["channels"].pop(str(channel_id), None)
+
+def get_active_channels():
+    with _lock: return list(_cache["channels"].values())
 
 # ─ـ البطولات ─ـ
-async def create_tournament(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_founder(update.effective_user.id): await update.message.reply_text("❌ مش مسموحلك."); return
-    tourney_id = f"t_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    prize = int(context.args[0]) if context.args and context.args[0].isdigit() else 500
-    db.create_tournament(tourney_id, prize)
-    await update.message.reply_text(f"🏆 تم إنشاء بطولة جديدة!\nID: `{tourney_id}`\nالجائزة: {prize} نقطة\nالعدد المطلوب: 8 لاعبين\nاستخدم /join عشان تنضم!")
+def create_tournament(tournament_id, prize=500):
+    if not _initialized: init_cache()
+    _ensure_tournaments()
+    t = {"tournament_id": tournament_id, "status":"open", "players":"", "rounds":"[]", "winner_id":"", "prize":prize, "created_at":str(datetime.now())}
+    _cache["tournaments"][tournament_id] = t
+    with _lock: _dirty["tournaments"].add(tournament_id)
+    return t
 
-async def join_tournament(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    t = db.get_active_tournament()
-    if not t: await update.message.reply_text("❌ مفيش بطولة مفتوحة حالياً."); return
-    if db.join_tournament(t["tournament_id"], user.id):
-        players = t["players"].split(",")
-        await update.message.reply_text(f"✅ انضميت للبطولة! ({len(players)}/8)")
-        if len(players) >= 8:
-            t["status"] = "running"
-            await start_tournament(t, context)
-    else: await update.message.reply_text("❌ إما البطولة مقفولة أو انت مشترك بالفعل.")
+def get_active_tournament():
+    if not _initialized: init_cache()
+    _ensure_tournaments()
+    for t in _cache["tournaments"].values():
+        if t["status"] in ("open","running"): return t
+    return None
 
-async def start_tournament(t, context):
-    players = t["players"].split(","); random.shuffle(players)
-    rounds = []; round1 = []
-    for i in range(0,8,2):
-        match = {"p1":players[i],"p2":players[i+1],"winner":None,"status":"pending"}
-        round1.append(match)
-        try:
-            await context.bot.send_message(int(players[i]), f"🏆 مباراتك في البطولة ضد {db.get_user(int(players[i+1]))['name']}!")
-            await context.bot.send_message(int(players[i+1]), f"🏆 مباراتك في البطولة ضد {db.get_user(int(players[i]))['name']}!")
-            async with active_games_lock:
-                game_id = f"t_{players[i]}_{players[i+1]}"
-                active_games[game_id] = {"p1":int(players[i]),"p1_name":db.get_user(int(players[i]))["name"],
-                                         "p2":int(players[i+1]),"p2_name":db.get_user(int(players[i+1]))["name"],
-                                         "c1":None,"c2":None,"created_at":datetime.now(),"best_of":1,"p1_wins":0,"p2_wins":0,
-                                         "tournament_match":True,"tournament_id":t["tournament_id"],"match_index":i//2}
-            kb = mp_keyboard(game_id)
-            await context.bot.send_message(int(players[i]), "اختار حركتك:", reply_markup=kb)
-            await context.bot.send_message(int(players[i+1]), "اختار حركتك:", reply_markup=kb)
-        except Exception as e: logging.error(f"خطأ بدء مباراة البطولة: {e}")
-    rounds.append(round1)
-    t["rounds"] = json.dumps(rounds)
-    db.update_tournament(t["tournament_id"], rounds=t["rounds"], status="running")
+def get_tournament(tournament_id):
+    if not _initialized: init_cache()
+    _ensure_tournaments()
+    return _cache["tournaments"].get(tournament_id)
 
-async def handle_tournament_match_result(game, winner_id, context):
-    t = db.get_tournament(game["tournament_id"])
-    if not t or t["status"]!="running": return
-    rounds = json.loads(t["rounds"])
-    current_round = rounds[-1]; match = current_round[game["match_index"]]
-    match["winner"] = str(winner_id); match["status"] = "finished"
-    if all(m["status"]=="finished" for m in current_round):
-        winners = [m["winner"] for m in current_round]
-        if len(winners)==1:
-            t["winner_id"] = winners[0]; t["status"] = "finished"; prize = t["prize"]
-            db.update_user(int(winners[0]), points=int(db.get_user(int(winners[0])).get("points",0))+prize, tournament_wins=int(db.get_user(int(winners[0])).get("tournament_wins",0))+1)
-            try: await context.bot.send_message(int(winners[0]), f"🎉 مبروك! أنت بطل البطولة وكسبت {prize} نقطة!")
-            except: pass
-        else:
-            next_round = []
-            for i in range(0,len(winners),2):
-                next_round.append({"p1":winners[i],"p2":winners[i+1],"winner":None,"status":"pending"})
-                async with active_games_lock:
-                    game_id = f"t_{winners[i]}_{winners[i+1]}"
-                    active_games[game_id] = {"p1":int(winners[i]),"p1_name":db.get_user(int(winners[i]))["name"],
-                                             "p2":int(winners[i+1]),"p2_name":db.get_user(int(winners[i+1]))["name"],
-                                             "c1":None,"c2":None,"created_at":datetime.now(),"best_of":1,"p1_wins":0,"p2_wins":0,
-                                             "tournament_match":True,"tournament_id":t["tournament_id"],"match_index":i//2}
-                kb = mp_keyboard(game_id)
-                await context.bot.send_message(int(winners[i]), "اختار حركتك للجولة القادمة:", reply_markup=kb)
-                await context.bot.send_message(int(winners[i+1]), "اختار حركتك للجولة القادمة:", reply_markup=kb)
-            rounds.append(next_round); t["rounds"] = json.dumps(rounds)
-    db.update_tournament(t["tournament_id"], rounds=t["rounds"], status=t["status"], winner_id=t["winner_id"])
+def join_tournament(tournament_id, user_id):
+    _ensure_tournaments()
+    t = _cache["tournaments"].get(tournament_id)
+    if not t or t["status"]!="open": return False
+    players = t["players"].split(",") if t["players"] else []
+    if str(user_id) in players: return False
+    players.append(str(user_id))
+    t["players"] = ",".join(players)
+    with _lock: _dirty["tournaments"].add(tournament_id)
+    return True
+
+def update_tournament(tournament_id, **kwargs):
+    _ensure_tournaments()
+    if tournament_id in _cache["tournaments"]:
+        _cache["tournaments"][tournament_id].update(kwargs)
+        with _lock: _dirty["tournaments"].add(tournament_id)
+
+# ─ـ الإنجازات ─ـ
+def get_achievements():
+    if not _initialized: init_cache()
+    _ensure_achievements()
+    return _cache["achievements"]
+
+def add_achievement(user_id, ach_id):
+    _ensure_achievements()
+    u = get_user(user_id)
+    if not u: return False
+    earned = u.get("achievements","").split(",") if u.get("achievements") else []
+    if ach_id in earned: return False
+    earned.append(ach_id)
+    update_user(user_id, achievements=",".join(earned))
+    return True
 
 # ─ـ الأصدقاء ─ـ
-async def handle_friend_request(update, context, action, from_id):
-    user = update.effective_user
-    if action == "accept":
-        db.add_friend(user.id, int(from_id))
-        db.remove_friend_request(user.id, int(from_id))
-        await update.callback_query.answer("✅ تم قبول الصداقة!", show_alert=True)
-    elif action == "reject":
-        db.remove_friend_request(user.id, int(from_id))
-        await update.callback_query.answer("❌ تم رفض الطلب.", show_alert=True)
-    await show_friend_list(update, context)
+def get_friends(user_id):
+    if not _initialized: init_cache()
+    return _cache["friends"].get(str(user_id), [])
 
-async def show_friend_list(update, context):
-    query = update.callback_query
-    user = query.from_user
-    friends = db.get_friends(user.id)
-    requests = db.get_friend_requests(user.id)
-    text = "👥 *قائمة الأصدقاء*\n\n"
-    if friends:
-        for fid in friends:
-            fuser = db.get_user(int(fid))
-            if fuser: text += f"• {fuser['name']}\n"
-    else: text += "لا يوجد أصدقاء بعد.\n"
-    if requests: text += f"\n📥 طلبات الصداقة ({len(requests)}):\n"
-    btns = []
-    if friends:
-        for fid in friends:
-            fuser = db.get_user(int(fid))
-            if fuser: btns.append([InlineKeyboardButton(f"⚔️ تحدي {fuser['name']}", callback_data=f"friend_challenge_{fid}")])
-    btns.append([InlineKeyboardButton("➕ إضافة صديق", callback_data="add_friend")])
-    if requests: btns.append([InlineKeyboardButton("📥 عرض الطلبات", callback_data="view_requests")])
-    btns.append([InlineKeyboardButton("🔙 رجوع", callback_data="menu_main")])
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(btns))
+def add_friend(user_id, friend_id):
+    uid, fid = str(user_id), str(friend_id)
+    _cache["friends"].setdefault(uid, []).append(fid) if fid not in _cache["friends"][uid] else None
+    _cache["friends"].setdefault(fid, []).append(uid) if uid not in _cache["friends"][fid] else None
 
-# ─ـ التحديات الجماعية ─ـ
-async def group_challenge_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    user = update.effective_user
-    if chat.type not in ("supergroup", "group"): await update.message.reply_text("⚠️ الأمر ده للجروبات بس!"); return
-    if not is_founder(user.id):
-        member = await context.bot.get_chat_member(chat.id, user.id)
-        if member.status not in ['administrator', 'creator']:
-            await update.message.reply_text("❌ لازم تكون مشرف."); return
-    args = context.args
-    if len(args) < 2: await update.message.reply_text("استخدام: /groupchallenge <عدد_الانتصارات> <المدة_بالساعات> [الجائزة]"); return
-    try: target_wins = int(args[0]); hours = int(args[1]); prize = int(args[2]) if len(args) > 2 else 500
-    except: await update.message.reply_text("أرقام غير صحيحة."); return
-    challenge_id = f"gc_{chat.id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    db.create_group_challenge(challenge_id, chat.id, target_wins, prize, hours)
-    await update.message.reply_text(f"🏆 تم بدء تحدي جماعي!\nالهدف: {target_wins} انتصارات\nالمدة: {hours} ساعة\nالجائزة: {prize} نقطة")
+def remove_friend(user_id, friend_id):
+    uid, fid = str(user_id), str(friend_id)
+    if uid in _cache["friends"] and fid in _cache["friends"][uid]: _cache["friends"][uid].remove(fid)
+    if fid in _cache["friends"] and uid in _cache["friends"][fid]: _cache["friends"][fid].remove(uid)
 
-async def update_group_challenge(group_id, user_id, wins):
-    challenge = db.get_active_group_challenge(group_id)
-    if challenge:
-        db.update_group_challenge_participant(challenge["challenge_id"], user_id, wins)
-        if challenge["winner_id"]:
-            winner_id = int(challenge["winner_id"])
-            db.update_user(winner_id, points=int(db.get_user(winner_id).get("points",0)) + challenge["prize"])
-            try: await bot.send_message(group_id, f"🎉 {db.get_user(winner_id)['name']} فاز بالتحدي الجماعي وحصل على {challenge['prize']} نقطة!")
-            except: pass
+def send_friend_request(from_id, to_id, from_name):
+    if not _initialized: init_cache()
+    tid = str(to_id)
+    if tid not in _cache["friend_requests"]: _cache["friend_requests"][tid] = []
+    for req in _cache["friend_requests"][tid]:
+        if req["from"] == str(from_id): return False
+    _cache["friend_requests"][tid].append({"from":str(from_id),"name":from_name,"date":str(datetime.now())})
+    return True
 
-# ─ـ الألقاب والثيمات ─ـ
-async def titles_shop_handler(update, context):
-    query = update.callback_query
-    titles = db.get_titles_shop()
-    u = db.get_user(query.from_user.id)
-    gems = u.get("gems", 0)
-    text = f"🏅 *متجر الألقاب*\n💎 جواهرك: {gems}\n\n"
-    btns = []
-    for t in titles:
-        owned = (u.get("title") == t["title_id"])
-        if owned: text += f"✅ {t['name']} - {t['description']}\n"
-        else: text += f"🔒 {t['name']} - {t['description']} ({t['cost_gems']} جوهرة)\n"; btns.append([InlineKeyboardButton(f"شراء {t['name']} ({t['cost_gems']}💎)", callback_data=f"buytitle_{t['title_id']}")])
-    btns.append([InlineKeyboardButton("🔙 رجوع", callback_data="menu_shop")])
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(btns))
+def get_friend_requests(user_id):
+    if not _initialized: init_cache()
+    return _cache["friend_requests"].get(str(user_id), [])
 
-async def buy_title_handler(update, context, title_id):
-    query = update.callback_query; user = query.from_user
-    u = db.get_user(user.id)
-    titles = db.get_titles_shop()
-    title = next((t for t in titles if t["title_id"] == title_id), None)
-    if not title: await query.answer("لقب غير موجود", show_alert=True); return
-    if u.get("gems", 0) < title["cost_gems"]: await query.answer("جواهر غير كافية", show_alert=True); return
-    db.update_user(user.id, gems=u["gems"] - title["cost_gems"], title=title_id)
-    await query.answer(f"اشتريت لقب {title['name']}!", show_alert=True)
+def remove_friend_request(user_id, from_id):
+    uid = str(user_id)
+    if uid in _cache["friend_requests"]:
+        _cache["friend_requests"][uid] = [req for req in _cache["friend_requests"][uid] if req["from"]!=str(from_id)]
 
-async def themes_shop_handler(update, context):
-    query = update.callback_query
-    themes = db.get_themes_shop()
-    u = db.get_user(query.from_user.id)
-    gems = u.get("gems", 0)
-    text = f"🎨 *متجر الثيمات*\n💎 جواهرك: {gems}\n\n"
-    btns = []
-    for th in themes:
-        owned = (u.get("theme") == th["theme_id"])
-        if owned: text += f"✅ {th['name']} - {th['description']}\n"
-        else: text += f"🔒 {th['name']} - {th['description']} ({th['cost_gems']} جوهرة)\n"; btns.append([InlineKeyboardButton(f"شراء {th['name']} ({th['cost_gems']}💎)", callback_data=f"buytheme_{th['theme_id']}")])
-    btns.append([InlineKeyboardButton("🔙 رجوع", callback_data="menu_shop")])
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(btns))
+# ─ـ تحديات جماعية ─ـ
+def create_group_challenge(challenge_id, group_id, target_wins, prize, duration_hours=24):
+    if not _initialized: init_cache()
+    _ensure_group_challenges()
+    now = datetime.now(); end = now + timedelta(hours=duration_hours)
+    c = {"challenge_id":challenge_id,"group_id":str(group_id),"target_wins":target_wins,"prize":prize,"start_date":str(now),"end_date":str(end),"participants":"{}","winner_id":""}
+    _cache["group_challenges"][challenge_id] = c
 
-async def buy_theme_handler(update, context, theme_id):
-    query = update.callback_query; user = query.from_user
-    u = db.get_user(user.id)
-    themes = db.get_themes_shop()
-    theme = next((t for t in themes if t["theme_id"] == theme_id), None)
-    if not theme: await query.answer("ثيم غير موجود", show_alert=True); return
-    if u.get("gems", 0) < theme["cost_gems"]: await query.answer("جواهر غير كافية", show_alert=True); return
-    db.update_user(user.id, gems=u["gems"] - theme["cost_gems"], theme=theme_id)
-    await query.answer(f"اشتريت ثيم {theme['name']}!", show_alert=True)
+def get_active_group_challenge(group_id):
+    if not _initialized: init_cache()
+    _ensure_group_challenges()
+    gid = str(group_id); now = datetime.now()
+    for c in _cache["group_challenges"].values():
+        if c["group_id"] == gid:
+            end = datetime.fromisoformat(c["end_date"])
+            if end > now and not c["winner_id"]: return c
+    return None
 
-# ─ـ صندوق الغنائم ─ـ
-async def open_loot_box(update, context):
-    query = update.callback_query; user = query.from_user
-    u = db.get_user(user.id)
-    owned = (u.get("shop_items", "") or "").split(",")
-    if "item_6" not in owned: await query.answer("❌ ما عندكش صندوق كنز.", show_alert=True); return
-    owned.remove("item_6")
-    db.update_user(user.id, shop_items=",".join(owned))
-    roll = random.random()
-    if roll < 0.5:
-        points_won = random.randint(500, 1500)
-        db.update_user(user.id, points=int(u.get("points",0)) + points_won)
-        msg = f"🎁 فتحت صندوق الكنز وكسبت {points_won} نقطة!"
-    elif roll < 0.8:
-        all_items = db.get_shop_items()
-        cards = [i for i in all_items if i["item_id"] != "item_6"]
-        if cards:
-            chosen = random.choice(cards)
-            new_owned = (u.get("shop_items", "") or "").split(",")
-            new_owned = [o for o in new_owned if o] + [chosen["item_id"]]
-            db.update_user(user.id, shop_items=",".join(new_owned))
-            msg = f"🎁 فتحت صندوق الكنز وحصلت على {chosen['emoji']} *{chosen['name']}*!"
-        else:
-            points_won = random.randint(500, 1500)
-            db.update_user(user.id, points=int(u.get("points",0)) + points_won)
-            msg = f"🎁 فتحت صندوق الكنز وكسبت {points_won} نقطة!"
-    else:
-        gems_won = random.randint(1, 5)
-        db.update_user(user.id, gems=int(u.get("gems",0)) + gems_won)
-        msg = f"🎁 فتحت صندوق الكنز وكسبت {gems_won} جوهرة 💎!"
-    await query.answer(msg, show_alert=True)
-    await show_my_items(update, context)
+def update_group_challenge_participant(challenge_id, user_id, wins):
+    _ensure_group_challenges()
+    c = _cache["group_challenges"].get(challenge_id)
+    if not c: return
+    participants = json.loads(c["participants"])
+    participants[str(user_id)] = wins
+    c["participants"] = json.dumps(participants)
+    if wins >= c["target_wins"] and not c["winner_id"]:
+        c["winner_id"] = str(user_id)
 
-async def show_my_items(update, context):
-    query = update.callback_query; user = query.from_user
-    u = db.get_user(user.id)
-    owned = (u.get("shop_items", "") or "").split(",")
-    owned = [o for o in owned if o]
-    items = db.get_shop_items()
-    counts = {}
-    for o in owned: counts[o] = counts.get(o, 0) + 1
-    text = "🎒 *بطاقاتي*\n\n"
-    if not owned: text += "ما عندكش بطاقات."
-    else:
-        for item_id, count in counts.items():
-            item = next((i for i in items if i["item_id"] == item_id), None)
-            if item: text += f"{item['emoji']} *{item['name']}* (x{count})\n"
-    btns = []
-    if owned:
-        for item_id in set(owned):
-            item = next((i for i in items if i["item_id"] == item_id), None)
-            if item:
-                if item_id == "item_6": btns.append([InlineKeyboardButton(f"🎁 فتح صندوق الكنز", callback_data="open_box")])
-                else: btns.append([InlineKeyboardButton(f"استخدام {item['name']}", callback_data=f"use_{item_id}")])
-    btns.append([InlineKeyboardButton("🔙 رجوع", callback_data="menu_shop")])
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(btns))
+# ─ـ ألقاب وثيمات ─ـ
+def get_titles_shop():
+    if not _initialized: init_cache()
+    _ensure_titles()
+    return _cache["titles_shop"]
 
-# ─ـ الأحداث الموسمية ─ـ
-async def event_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    ev = db.get_active_event()
-    if not ev: await update.message.reply_text("لا يوجد حدث حالي."); return
-    tasks_str = ""
-    if ev["special_tasks"]:
-        for t in ev["special_tasks"]: tasks_str += f"• {t['description']} — {t['reward']} نقطة\n"
-    text = f"🎉 *الحدث الحالي: {ev['name']}*\nينتهي: {ev['end_date']}\n\n🎯 *مهام خاصة:*\n{tasks_str}"
-    await update.message.reply_text(text, parse_mode="Markdown")
+def get_themes_shop():
+    if not _initialized: init_cache()
+    _ensure_themes()
+    return _cache["themes_shop"]
 
-# ─ـ حرب العشائر ─ـ
-async def clan_war_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    war = db.get_active_clan_war()
-    if not war: await update.message.reply_text("لا توجد حرب عشائر حالية."); return
+# ─ـ أحداث وحروب عشائر ─ـ
+def get_active_event():
+    if not _initialized: init_cache()
+    _ensure_events()
+    now = datetime.now()
+    for ev in _cache["events"]:
+        start = datetime.fromisoformat(ev["start_date"]); end = datetime.fromisoformat(ev["end_date"])
+        if start <= now <= end: return ev
+    return None
+
+def get_active_clan_war():
+    if not _initialized: init_cache()
+    _ensure_clan_wars()
+    now = datetime.now()
+    for war in _cache["clan_wars"].values():
+        start = datetime.fromisoformat(war["start_date"]); end = datetime.fromisoformat(war["end_date"])
+        if start <= now <= end: return war
+    return None
+
+def add_clan_war_points(clan_name, points):
+    war = get_active_clan_war()
+    if not war: return
+    pts = json.loads(war["clan_points"])
+    pts[clan_name] = pts.get(clan_name,0) + points
+    war["clan_points"] = json.dumps(pts)
+
+def create_clan_war(duration_days=7, prize_points=10000, prize_gems=50):
+    if not _initialized: init_cache()
+    _ensure_clan_wars()
+    war_id = f"cw_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    start = datetime.now(); end = start + timedelta(days=duration_days)
+    war = {"war_id":war_id,"start_date":str(start),"end_date":str(end),"clan_points":"{}","winner_clan":"","prize_points":prize_points,"prize_gems":prize_gems}
+    _cache["clan_wars"][war_id] = war
+    return war
+
+def end_clan_war(war_id):
+    _ensure_clan_wars()
+    war = _cache["clan_wars"].get(war_id)
+    if not war or war["winner_clan"]: return
     cp = json.loads(war["clan_points"])
-    sorted_clans = sorted(cp.items(), key=lambda x: x[1], reverse=True)
-    text = "⚔️ *حرب العشائر*\n\n"
-    for i, (clan, pts) in enumerate(sorted_clans[:10], 1): text += f"{i}. {clan}: {pts} نقطة\n"
-    await update.message.reply_text(text, parse_mode="Markdown")
+    if not cp: return
+    winner = max(cp, key=cp.get)
+    war["winner_clan"] = winner
+    clan = get_clan(winner)
+    if clan:
+        members = clan["members"].split(",")
+        for mid in members:
+            update_user(int(mid), points=_safe_int(get_user(int(mid)).get("points",0)) + war.get("prize_points",0),
+                       gems=_safe_int(get_user(int(mid)).get("gems",0)) + war.get("prize_gems",0))
 
-async def start_clan_war(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_founder(update.effective_user.id): await update.message.reply_text("❌ غير مسموح."); return
-    days = int(context.args[0]) if context.args else 7
-    war = db.create_clan_war(duration_days=days)
-    await update.message.reply_text(f"⚔️ بدأت حرب العشائر! تنتهي بعد {days} يوم.")
+# ─ـ خيط المزامنة ─ـ
+def _sync_loop():
+    while True:
+        time.sleep(30)
+        _flush_with_retry(_flush_users, "users")
+        _flush_with_retry(_flush_clans, "clans")
+        _flush_with_retry(_flush_ratings, "ratings")
+        _flush_with_retry(_flush_tournaments, "tournaments")
 
-async def end_war_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_founder(update.effective_user.id): await update.message.reply_text("❌ غير مسموح."); return
-    war = db.get_active_clan_war()
-    if not war: await update.message.reply_text("لا توجد حرب نشطة."); return
-    db.end_clan_war(war["war_id"])
-    await update.message.reply_text(f"🏆 انتهت حرب العشائر! العشيرة الفائزة: {war.get('winner_clan','?')}")
+def _flush_with_retry(flush_func, dirty_key):
+    try: flush_func()
+    except Exception as e:
+        print(f"Sync error in {dirty_key}: {e}")
+        with _lock:
+            if dirty_key in _dirty: _dirty[dirty_key].update(_cache[dirty_key].keys() if isinstance(_cache[dirty_key], dict) else [])
 
-# ─ـ وضع القصة ─ـ
-async def story_mode_handler(update, context):
-    query = update.callback_query
-    user = query.from_user
-    u = db.get_user(user.id)
-    level = u.get("story_level", 1)
-    boss = STORY_LEVELS.get(level)
-    if not boss:
-        await query.edit_message_text("🎉 لقد أكملت كل المستويات!")
-        return
-    text = f"📖 *المستوى {level}*\n\n{boss['story']}\nالزعيم: {boss['emoji']} *{boss['boss']}*\nاختار حركتك:"
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=solo_keyboard(user.id))
-    context.user_data["in_story_mode"] = True
+def _flush_users():
+    with _lock:
+        dirty = list(_dirty["users"]); _dirty["users"].clear()
+    if not dirty: return
+    ws = get_sheet("users")
+    headers = ws.row_values(1)
+    all_rows = ws.get_all_values()
+    id_to_row = {str(row[0]): i+2 for i, row in enumerate(all_rows[1:])}
+    for uid in dirty:
+        u = _cache["users"].get(uid)
+        if not u: continue
+        u_sheet = dict(u)
+        u_sheet["banned"] = "TRUE" if u_sheet.get("banned") else "FALSE"
+        u_sheet["referred"] = "TRUE" if u_sheet.get("referred") else "FALSE"
+        u_sheet["daily_claimed"] = "TRUE" if u_sheet.get("daily_claimed") else "FALSE"
+        row_data = [str(u_sheet.get(h, "")) for h in headers]
+        if uid in id_to_row: ws.update(f"A{id_to_row[uid]}", [row_data])
+        else: ws.append_row(row_data)
 
-# ─ـ Spock ─ـ
-async def play_spock_handler(update, context):
-    query = update.callback_query
-    choices = CHOICES_SPOCK
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton(v, callback_data=f"spock_{k}") for k,v in choices.items()]])
-    await query.edit_message_text("🖖 اختار حركتك (Spock):", reply_markup=kb)
+def _flush_clans():
+    with _lock:
+        dirty = list(_dirty["clans"]); _dirty["clans"].clear()
+    if not dirty: return
+    ws = get_sheet("clans")
+    headers = ws.row_values(1)
+    all_rows = ws.get_all_values()
+    name_to_row = {str(row[0]): i+2 for i, row in enumerate(all_rows[1:])}
+    for clan_name in dirty:
+        c = _cache["clans"].get(clan_name)
+        if not c: continue
+        row_data = [str(c.get(h, "")) for h in headers]
+        if clan_name in name_to_row: ws.update(f"A{name_to_row[clan_name]}", [row_data])
+        else: ws.append_row(row_data)
 
-async def handle_spock_choice(update, context, choice):
-    query = update.callback_query; user = query.from_user
-    bot_choice = random.choice(list(CHOICES_SPOCK.keys()))
-    if choice == bot_choice: result = "draw"
-    elif bot_choice in WIN_MAP_SPOCK[choice]: result = "win"
-    else: result = "loss"
-    u = db.get_user(user.id)
-    pts = int(u.get("points",0) or 0)
-    if result == "win": pts_add = 10; wins = int(u.get("wins",0))+1; losses = int(u.get("losses",0)); draws = int(u.get("draws",0))
-    elif result == "loss": pts_add = -3; wins = int(u.get("wins",0)); losses = int(u.get("losses",0))+1; draws = int(u.get("draws",0))
-    else: pts_add = 5; wins = int(u.get("wins",0)); losses = int(u.get("losses",0)); draws = int(u.get("draws",0))+1
-    pts = max(0, pts+pts_add)
-    db.update_user(user.id, points=pts, wins=wins, losses=losses, draws=draws)
-    await query.edit_message_text(
-        f"انت: {CHOICES_SPOCK[choice]}\nالبوت: {CHOICES_SPOCK[bot_choice]}\n\n"
-        f"{'🎉 كسبت!' if result=='win' else '😢 خسرت!' if result=='loss' else '🤝 تعادل!'} ({'+' if pts_add>=0 else ''}{pts_add} نقطة)\n💰 نقاطك: {pts}",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 العب تاني", callback_data="play_spock")], [InlineKeyboardButton("🏠 القائمة", callback_data="menu_main")]])
-    )
+def _flush_ratings():
+    with _lock:
+        dirty = list(_dirty["ratings"]); _dirty["ratings"].clear()
+    if not dirty: return
+    ws = get_sheet("ratings")
+    all_rows = ws.get_all_values()
+    id_to_row = {str(row[0]): i+2 for i, row in enumerate(all_rows[1:])}
+    for uid in dirty:
+        stars = _cache["ratings"].get(uid, 0)
+        if uid in id_to_row: ws.update_cell(id_to_row[uid], 2, stars)
+        else: ws.append_row([uid, str(stars), ""])
 
-# ─ـ الذكاء الاصطناعي ─ـ
-def smart_bot_choice(user_id):
-    u = db.get_user(user_id)
-    if not u: return random.choice(list(CHOICES.keys()))
-    moves = json.loads(u.get("move_history", "[]"))
-    if len(moves) < 5: return random.choice(list(CHOICES.keys()))
-    from collections import Counter
-    counter = Counter(moves)
-    most_common = counter.most_common(1)[0][0]
-    for k, v in WIN_MAP.items():
-        if v == most_common: return k
-    return random.choice(list(CHOICES.keys()))
-
-def update_user_moves(user_id, move):
-    u = db.get_user(user_id)
-    if not u: return
-    moves = json.loads(u.get("move_history", "[]"))
-    moves.append(move)
-    if len(moves) > 50: moves = moves[-50:]
-    db.update_user(user_id, move_history=json.dumps(moves))
-
-# ─ـ الأوامر الأساسية ─ـ
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    ref_bonus = False
-    if context.args:
-        arg = context.args[0]
-        if arg.startswith("ref_"):
-            ref_id = arg.replace("ref_", "")
-            existing = db.get_user(user.id)
-            if not existing and str(user.id) != ref_id:
-                referrer = db.get_user(int(ref_id))
-                if referrer and not db.has_been_referred(user.id):
-                    pts = int(referrer.get("points", 0) or 0)
-                    db.update_user(int(ref_id), points=pts + 1000)
-                    db.mark_referred(user.id)
-                    ref_bonus = True
-                    try: await context.bot.send_message(int(ref_id), f"🎁 المستخدم *{user.first_name}* دخل عن طريق رابط الدعوة بتاعك! تم إضافة 1000 نقطة لك.", parse_mode="Markdown")
-                    except Exception as e: logging.error(f"فشل إرسال إشعار الإحالة: {e}")
-        elif arg.startswith("challenge_"):
-            async with active_games_lock:
-                game_id = arg.replace("challenge_", "")
-                game = active_games.get(game_id)
-            if not game: await update.message.reply_text("❌ التحدي انتهى أو لم يعد موجوداً."); return
-            if game["p1"] == user.id: await update.message.reply_text("❌ لا يمكنك قبول تحدي نفسك!"); return
-            if game["p2"] is not None: await update.message.reply_text("❌ هذا التحدي ممتلئ بالفعل!"); return
-            async with active_games_lock:
-                game["p2"] = user.id; game["p2_name"] = user.first_name
-            db.get_or_create_user(user.id, user.first_name, user.username)
-            await update.message.reply_text(f"✅ تم قبول التحدي! ⚔️ *{game['p1_name']}* vs *{user.first_name}*", parse_mode="Markdown")
-            kb = mp_keyboard(game_id)
-            await context.bot.send_message(game["p1"], "اللعبة بدأت! اختار حركتك 👇", reply_markup=kb)
-            await context.bot.send_message(user.id, "اختار حركتك 👇", reply_markup=kb)
-            return
-        elif arg.startswith("joinclan_"):
-            clan_name = arg.replace("joinclan_", "")
-            clan = db.get_clan(clan_name)
-            if not clan: await update.message.reply_text("❌ العشيرة غير موجودة."); return
-            u = db.get_user(user.id)
-            if not u: db.get_or_create_user(user.id, user.first_name, user.username); u = db.get_user(user.id)
-            if u.get("clan"): await update.message.reply_text("❌ أنت بالفعل في عشيرة أخرى."); return
-            members = str(clan.get("members","")).split(",")
-            if str(user.id) in members: await update.message.reply_text("❌ أنت بالفعل عضو."); return
-            members.append(str(user.id))
-            db.update_clan(clan_name, members=",".join(members))
-            db.update_user(user.id, clan=clan_name)
-            await update.message.reply_text(f"✅ انضممت إلى عشيرة *{clan_name}*!", parse_mode="Markdown")
-            return
-
-    db.get_or_create_user(user.id, user.first_name, user.username)
-    u = db.get_user(user.id)
-    if db.is_banned(user.id): await update.message.reply_text("🚫 أنت محظور من استخدام البوت."); return
-    points = int(u.get("points", 0))
-    leaderboard = db.get_leaderboard(100)
-    rank = next((i+1 for i,p in enumerate(leaderboard) if p["user_id"]==str(user.id)), "غير مصنف")
-    text = (f"أهلاً *{user.first_name}*! 👋\n\n🎮 *لعبة حجر ورقة مقص*\n💰 رصيدك: {points} نقطة\n🏅 تصنيفك: #{rank}\n\nاختار من القائمة 👇")
-    if ref_bonus: text += "\n\n🎁 تم منح صاحبك 1000 نقطة على دعوتك!"
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_menu_keyboard(user.id))
-
-async def activate_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if chat.type not in ("supergroup", "group"): await update.message.reply_text("⚠️ الأمر ده للجروبات بس!"); return
-    channel_id = chat.id
-    has_perm = await check_bot_permissions(channel_id, context)
-    if not has_perm: await update.message.reply_text("❌ البوت مش قادر يبعت رسايل..."); return
-    await stop_channel_internal(channel_id, context)
-    db.add_active_channel(channel_id, chat.title or "جروب")
-    channel_last_play[channel_id] = datetime.now()
-    async with channel_tasks_lock:
-        task = asyncio.create_task(channel_loop(channel_id, context))
-        channel_tasks[channel_id] = task
-    await update.message.reply_text("✅ تم تفعيل اللعب التلقائي!\nكل دقيقتين هتظهر لعبة جديدة بين عضوين 🎮")
-
-async def stop_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if chat.type not in ("supergroup", "group"): await update.message.reply_text("⚠️ الأمر ده للجروبات بس!"); return
-    channel_id = chat.id
-    async with channel_tasks_lock:
-        if channel_id in channel_tasks: await stop_channel_internal(channel_id, context)
-        else: await update.message.reply_text("ℹ️ الجروب مش مفعّل أصلاً."); return
-    await update.message.reply_text("✅ تم إيقاف اللعب التلقائي.")
-
-# ─ـ معالج الأزرار ─ـ
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query; await query.answer()
-    data = query.data; user = query.from_user
-    db.get_or_create_user(user.id, user.first_name, user.username)
-    if db.is_banned(user.id): await query.edit_message_text("🚫 أنت محظور."); return
-    u = db.get_user(user.id)
-
-    if data == "menu_main":
-        points = int(u.get("points",0)) if u else 0; leaderboard = db.get_leaderboard(100)
-        rank = next((i+1 for i,p in enumerate(leaderboard) if p["user_id"]==str(user.id)), "غير مصنف")
-        await query.edit_message_text(f"أهلاً *{user.first_name}*! 👋\n\n🎮 *لعبة حجر ورقة مقص*\n💰 رصيدك: {points} نقطة\n🏅 تصنيفك: #{rank}\n\nاختار من القائمة 👇", parse_mode="Markdown", reply_markup=main_menu_keyboard(user.id))
-    elif data == "daily_bonus":
-        msg = await claim_daily(user.id, context)
-        await query.answer(msg, show_alert=True); await query.edit_message_text(msg, reply_markup=main_menu_keyboard(user.id))
-    elif data == "menu_play": await query.edit_message_text("🎮 اختار نوع اللعب:", reply_markup=play_menu_keyboard())
-
-    # فردي
-    elif data == "play_solo": await query.edit_message_text("🤖 اختار حركتك:", reply_markup=solo_keyboard(user.id))
-    elif data.startswith("solo_"):
-        choice = data.replace("solo_", ""); bot_choice = smart_bot_choice(user.id)
-        result = get_result(choice, bot_choice)
-        u = db.get_user(user.id)
-        pts = int(u.get("points",0) or 0); wins = int(u.get("wins",0) or 0); losses = int(u.get("losses",0) or 0); draws = int(u.get("draws",0) or 0)
-        solo_games = int(u.get("solo_games",0)) + 1
-        rock_used = int(u.get("rock_used",0)) + (1 if choice=="rock" else 0)
-        paper_used = int(u.get("paper_used",0)) + (1 if choice=="paper" else 0)
-        scissors_used = int(u.get("scissors_used",0)) + (1 if choice=="scissors" else 0)
-        if result == "win": emoji, txt, pts_add = "🎉", "كسبت!", 10; wins += 1; win_streak = int(u.get("win_streak",0))+1; add_clan_points(user.id, 3); await check_and_complete_task(user.id, "task_1", context); await check_and_complete_task(user.id, "task_2", context, 1)
-        elif result == "loss": emoji, txt, pts_add = "😢", "خسرت!", -3; losses += 1; win_streak = 0
-        else: emoji, txt, pts_add = "🤝", "تعادل!", 5; draws += 1; win_streak = int(u.get("win_streak",0)); add_clan_points(user.id, 1)
-        pts = max(0, pts+pts_add)
-        db.update_user(user.id, points=pts, wins=wins, losses=losses, draws=draws, solo_games=solo_games, rock_used=rock_used, paper_used=paper_used, scissors_used=scissors_used, win_streak=win_streak)
-        update_user_moves(user.id, choice); await check_achievements(user.id, context)
-        await query.edit_message_text(f"انت: {get_choices_for_user(user.id)[choice]}\nالبوت: {get_choices_for_user(user.id)[bot_choice]}\n\n{emoji} *{txt}*  ({'+' if pts_add>=0 else ''}{pts_add} نقطة)\n💰 نقاطك: {pts}", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 العب تاني", callback_data="play_solo")], [InlineKeyboardButton("🏠 القائمة", callback_data="menu_main")]]))
-
-    # صديق
-    elif data == "play_friend":
-        await query.edit_message_text("اختار نوع التحدي:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚡ جولة واحدة", callback_data="friend_bo1")], [InlineKeyboardButton("🔥 أفضل من 3", callback_data="friend_bo3")], [InlineKeyboardButton("🔙 رجوع", callback_data="menu_play")]]))
-    elif data in ("friend_bo1", "friend_bo3"):
-        best_of = 1 if data=="friend_bo1" else 3; context.user_data["friend_best_of"] = best_of
-        await query.edit_message_text("📩 ابعت يوزر صديقك (@username) أو الـ ID بتاعه:", reply_markup=back_btn("menu_play"))
-        context.user_data["awaiting"] = "friend_challenge"; context.user_data["awaiting_time"] = datetime.now()
-
-    # قبول تحدي
-    elif data.startswith("join_"):
-        async with active_games_lock:
-            game_id = data.replace("join_", ""); game = active_games.get(game_id)
-            if not game: await query.edit_message_text("❌ التحدي انتهى."); return
-            if game["p1"] == user.id: await query.answer("❌ مش ممكن تقبل تحدي نفسك!", show_alert=True); return
-            if game["p2"] is not None: await query.answer("❌ التحدي ممتلئ!", show_alert=True); return
-            game["p2"] = user.id; game["p2_name"] = user.first_name
-        db.get_or_create_user(user.id, user.first_name, user.username)
-        await query.edit_message_text(f"⚔️ *{game['p1_name']}* vs *{user.first_name}*\nاللعبة بدأت!", parse_mode="Markdown")
-        kb = mp_keyboard(game_id)
-        await context.bot.send_message(game["p1"], "اختار حركتك 👇", reply_markup=kb)
-        await context.bot.send_message(user.id, "اختار حركتك 👇", reply_markup=kb)
-
-    # متعددة
-    elif data.startswith("mp_"):
-        parts = data.split("_"); choice = parts[-1]; game_id = "_".join(parts[1:-1])
-        async with active_games_lock:
-            game = active_games.get(game_id)
-            if not game: await query.edit_message_text("❌ اللعبة انتهت."); return
-            if user.id == game["p1"] and not game["c1"]: game["c1"] = choice; await query.edit_message_text("✅ اخترت! استنى...")
-            elif user.id == game["p2"] and not game["c2"]: game["c2"] = choice; await query.edit_message_text("✅ اخترت! استنى...")
-            else: return
-            if game["c1"] and game["c2"]:
-                c1, c2 = game["c1"], game["c2"]; result = get_result(c1, c2)
-                summary = f"⚔️ *النتيجة*\n\n{game['p1_name']}: {CHOICES[c1]}\n{game['p2_name']}: {CHOICES[c2]}\n\n"
-                u1 = db.get_user(game["p1"]); u2 = db.get_user(game["p2"])
-                if result == "win": p1_add, p2_add = 5, -1; game["p1_wins"] = game.get("p1_wins",0)+1; r1, r2 = "🎉 كسب الجولة!", "😢 خسر الجولة!"; add_clan_points(game["p1"], 2)
-                elif result == "loss": p1_add, p2_add = -1, 5; game["p2_wins"] = game.get("p2_wins",0)+1; r1, r2 = "😢 خسر الجولة!", "🎉 كسب الجولة!"; add_clan_points(game["p2"], 2)
-                else: p1_add = p2_add = 2; r1 = r2 = "🤝 تعادل الجولة!"
-                db.update_user(game["p1"], points=max(0, int(u1.get("points",0))+p1_add)); db.update_user(game["p2"], points=max(0, int(u2.get("points",0))+p2_add))
-                required_wins = (game.get("best_of",1)+1)//2
-                if game.get("p1_wins",0) >= required_wins or game.get("p2_wins",0) >= required_wins:
-                    winner_id = game["p1"] if game["p1_wins"] >= required_wins else game["p2"]
-                    loser_id = game["p2"] if winner_id == game["p1"] else game["p1"]
-                    db.update_user(winner_id, points=int(db.get_user(winner_id).get("points",0))+15, wins=int(db.get_user(winner_id).get("wins",0))+1)
-                    db.update_user(loser_id, points=max(0, int(db.get_user(loser_id).get("points",0))-3), losses=int(db.get_user(loser_id).get("losses",0))+1)
-                    add_clan_points(winner_id, 5); await check_and_complete_task(winner_id, "task_3", context)
-                    if game.get("game_type")=="friend":
-                        db.update_user(game["p1"], friend_games=int(u1.get("friend_games",0))+1); db.update_user(game["p2"], friend_games=int(u2.get("friend_games",0))+1)
-                    elif game.get("game_type")=="random":
-                        db.update_user(game["p1"], random_games=int(u1.get("random_games",0))+1); db.update_user(game["p2"], random_games=int(u2.get("random_games",0))+1)
-                    if game.get("best_of")==3:
-                        db.update_user(winner_id, bo3_wins=int(db.get_user(winner_id).get("bo3_wins",0))+1)
-                        db.update_user(loser_id, bo3_losses=int(db.get_user(loser_id).get("bo3_losses",0))+1)
-                    if game.get("tournament_match"): await handle_tournament_match_result(game, winner_id, context)
-                    final_msg = f"🏆 *الماتش انتهى!*\nالنتيجة النهائية: {game['p1_wins']} - {game['p2_wins']}\nالفائز: {db.get_user(winner_id)['name']} (+15 نقطة)"
-                    await context.bot.send_message(game["p1"], final_msg, parse_mode="Markdown"); await context.bot.send_message(game["p2"], final_msg, parse_mode="Markdown")
-                    del active_games[game_id]
-                else:
-                    game["c1"] = None; game["c2"] = None; kb = mp_keyboard(game_id)
-                    round_msg = f"الجولة القادمة! النتيجة: {game['p1_wins']} - {game['p2_wins']}"
-                    await context.bot.send_message(game["p1"], round_msg, reply_markup=kb); await context.bot.send_message(game["p2"], round_msg, reply_markup=kb)
-
-    # عشوائي
-    elif data == "play_random":
-        async with pending_matches_lock:
-            if any(m["id"]==user.id for m in pending_matches): await query.answer("أنت بالفعل في قائمة الانتظار!", show_alert=True); return
-            if pending_matches:
-                opponent = pending_matches.pop(0)
-                async with active_games_lock:
-                    game_id = f"r_{user.id}_{random.randint(1000,9999)}"
-                    active_games[game_id] = {"p1":opponent["id"],"p1_name":opponent["name"],"p2":user.id,"p2_name":user.first_name,"c1":None,"c2":None,"created_at":datetime.now(),"best_of":1,"p1_wins":0,"p2_wins":0,"game_type":"random"}
-                asyncio.create_task(game_timeout(game_id, context))
-                kb = mp_keyboard(game_id)
-                await query.edit_message_text(f"✅ لاقيت خصم: *{opponent['name']}*\nاختار حركتك 👇", parse_mode="Markdown", reply_markup=kb)
-                await context.bot.send_message(opponent["id"], f"✅ لاقيت خصم: *{user.first_name}*\nاختار حركتك 👇", parse_mode="Markdown", reply_markup=kb)
-            else:
-                pending_matches.append({"id":user.id,"name":user.first_name})
-                await query.edit_message_text("🔍 بندور على خصم... استنى!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="cancel_random")]]))
-    elif data == "cancel_random":
-        async with pending_matches_lock:
-            pending_matches[:] = [m for m in pending_matches if m["id"]!=user.id]
-        await query.edit_message_text("✅ تم الإلغاء.", reply_markup=main_menu_keyboard(user.id))
-
-    # القناة (ch_)
-    elif data.startswith("ch_"):
-        parts = data.split("_", 2); channel_id = int(parts[1]); choice = parts[2]
-        async with channel_games_lock:
-            game = channel_games.get(channel_id)
-            if not game: await query.answer("❌ انتهت الجولة.", show_alert=True); return
-            if user.id == game.get("player1") or user.id == game.get("player2"): await query.answer("❌ انت لعبت خلاص!", show_alert=True); return
-            if game["player1"] is None:
-                game["player1"] = user.id; game["choice1"] = choice
-                await query.answer("✅ انت اللاعب الأول! استنى الخصم", show_alert=True)
-                try: await context.bot.edit_message_text(chat_id=channel_id, message_id=game["message_id"], text=f"🎮 *{user.first_name}* دخل اللعبة! في انتظار لاعب تاني يضغط...", parse_mode="Markdown", reply_markup=channel_keyboard(channel_id))
-                except Exception as e: logging.error(f"فشل تعديل رسالة القناة: {e}")
-            elif game["player2"] is None and game["player1"] != user.id:
-                game["player2"] = user.id; game["choice2"] = choice
-                p1 = db.get_user(game["player1"]); p2 = db.get_user(user.id)
-                if not p1 or not p2: await cancel_channel_game(channel_id, context, "خطأ في بيانات اللاعبين"); return
-                result = get_result(game["choice1"], game["choice2"]); c1_name, c2_name = CHOICES[game["choice1"]], CHOICES[game["choice2"]]
-                if result == "win":
-                    p1_add, p2_add = 15, -3
-                    db.update_user(game["player1"], points=max(0,int(p1.get("points",0))+p1_add), wins=int(p1.get("wins",0))+1)
-                    db.update_user(game["player2"], points=max(0,int(p2.get("points",0))+p2_add), losses=int(p2.get("losses",0))+1)
-                    add_clan_points(game["player1"], 5); result_text = f"{p1['name']} كسب {p2['name']}!"
-                elif result == "loss":
-                    p1_add, p2_add = -3, 15
-                    db.update_user(game["player1"], points=max(0,int(p1.get("points",0))+p1_add), losses=int(p1.get("losses",0))+1)
-                    db.update_user(game["player2"], points=max(0,int(p2.get("points",0))+p2_add), wins=int(p2.get("wins",0))+1)
-                    add_clan_points(game["player2"], 5); result_text = f"{p2['name']} كسب {p1['name']}!"
-                else:
-                    p1_add = p2_add = 5
-                    db.update_user(game["player1"], points=int(p1.get("points",0))+5, draws=int(p1.get("draws",0))+1)
-                    db.update_user(game["player2"], points=int(p2.get("points",0))+5, draws=int(p2.get("draws",0))+1)
-                    add_clan_points(game["player1"], 2); add_clan_points(game["player2"], 2); result_text = "تعادل!"
-                db.update_user(game["player1"], channel_games=int(p1.get("channel_games",0))+1)
-                db.update_user(game["player2"], channel_games=int(p2.get("channel_games",0))+1)
-                await update_group_challenge(channel_id, game["player1"], int(p1.get("wins",0)))
-                await update_group_challenge(channel_id, game["player2"], int(p2.get("wins",0)))
-                await check_achievements(game["player1"], context); await check_achievements(game["player2"], context)
-                final_text = f"⚔️ *النتيجة*\n\n{p1['name']}: {c1_name}\n{p2['name']}: {c2_name}\n\n🏆 {result_text}\n💰 {p1['name']}: {'+' if p1_add>=0 else ''}{p1_add} نقطة | {p2['name']}: {'+' if p2_add>=0 else ''}{p2_add} نقطة"
-                try: await context.bot.edit_message_text(chat_id=channel_id, message_id=game["message_id"], text=final_text, parse_mode="Markdown")
-                except Exception as e: logging.error(f"فشل عرض نتيجة القناة: {e}")
-                del channel_games[channel_id]
-            else: await query.answer("❌ اللعبة اكتملت خلاص", show_alert=True)
-
-    # باقي الأزرار بنفس النمط (تم تضمينها في النسخة الكاملة السابقة، ولن نكررها هنا اختصاراً)
-    # ...
-
-# ─ـ معالج النصوص ─ـ
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (الكود الكامل موجود في النسخ السابقة)
-    pass
-
-# ─ـ معالج الأخطاء ─ـ
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.error(f"استثناء غير معالج: {context.error}")
-    try: await context.bot.send_message(FOUNDER_ID, f"⚠️ خطأ غير معالج:\n`{context.error}`\nالحدث: {update}", parse_mode="Markdown")
-    except Exception as e: logging.error(f"فشل إرسال إشعار الخطأ للمؤسس: {e}")
-
-def main():
-    if not TOKEN: raise ValueError("BOT_TOKEN غير موجود!")
-    db.init_cache()
-    load_translations()
-    threading.Thread(target=run_flask, daemon=True).start()
-    app = Application.builder().token(TOKEN).build()
-    app.add_error_handler(error_handler)
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("activate", activate_channel))
-    app.add_handler(CommandHandler("stopchannel", stop_channel))
-    app.add_handler(CommandHandler("tournament", create_tournament))
-    app.add_handler(CommandHandler("join", join_tournament))
-    app.add_handler(CommandHandler("achievements", achievements_command))
-    app.add_handler(CommandHandler("language", set_language))
-    app.add_handler(CommandHandler("event", event_info))
-    app.add_handler(CommandHandler("clanwar", clan_war_status))
-    app.add_handler(CommandHandler("startwar", start_clan_war))
-    app.add_handler(CommandHandler("endwar", end_war_command))
-    app.add_handler(CommandHandler("groupchallenge", group_challenge_command))
-    app.add_handler(CallbackQueryHandler(button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-    logging.info("✅ البوت شغال...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    main()
+def _flush_tournaments():
+    with _lock:
+        dirty = list(_dirty["tournaments"]); _dirty["tournaments"].clear()
+    if not dirty: return
+    _ensure_tournaments()
+    ws = get_sheet("tournaments")
+    headers = ws.row_values(1)
+    all_rows = ws.get_all_values()
+    id_to_row = {str(row[0]): i+2 for i, row in enumerate(all_rows[1:])}
+    for tid in dirty:
+        t = _cache["tournaments"].get(tid)
+        if not t: continue
+        row_data = [str(t.get(h, "")) for h in headers]
+        if tid in id_to_row: ws.update(f"A{id_to_row[tid]}", [row_data])
+        else: ws.append_row(row_data)
