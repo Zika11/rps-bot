@@ -85,7 +85,8 @@ def _load_users():
         ws.append_row([
             "user_id","name","username","points","clan",
             "wins","losses","draws","rating","daily_tasks",
-            "shop_items","tasks_progress","referrals","banned","referred"
+            "shop_items","tasks_progress","referrals","banned","referred",
+            "streak_count","last_claim_date","daily_claimed"
         ])
         return
     records = ws.get_all_records()
@@ -106,7 +107,10 @@ def _load_users():
             "tasks_progress": r.get("tasks_progress", ""),
             "referrals": _safe_int(r.get("referrals")),
             "banned": _safe_bool(r.get("banned")),
-            "referred": _safe_bool(r.get("referred"))
+            "referred": _safe_bool(r.get("referred")),
+            "streak_count": _safe_int(r.get("streak_count")),
+            "last_claim_date": r.get("last_claim_date", ""),
+            "daily_claimed": _safe_bool(r.get("daily_claimed"))
         }
 
 def _load_clans():
@@ -220,6 +224,7 @@ def _flush_users():
         u_sheet = dict(u)
         u_sheet["banned"] = "TRUE" if u_sheet.get("banned") else "FALSE"
         u_sheet["referred"] = "TRUE" if u_sheet.get("referred") else "FALSE"
+        u_sheet["daily_claimed"] = "TRUE" if u_sheet.get("daily_claimed") else "FALSE"
         row_data = [str(u_sheet.get(h, "")) for h in headers]
         if uid in id_to_row:
             ws.update(f"A{id_to_row[uid]}", [row_data])
@@ -272,7 +277,8 @@ def get_or_create_user(user_id, name, username):
             "user_id": uid, "name": name, "username": username or "",
             "points": 0, "clan": "", "wins": 0, "losses": 0,
             "draws": 0, "rating": 0, "daily_tasks": "", "shop_items": "",
-            "tasks_progress": "", "referrals": 0, "banned": False, "referred": False
+            "tasks_progress": "", "referrals": 0, "banned": False, "referred": False,
+            "streak_count": 0, "last_claim_date": "", "daily_claimed": False
         }
         _cache["users"][uid] = u
         with _lock:
@@ -289,7 +295,7 @@ def update_user(user_id, **kwargs):
         init_cache()
     uid = str(user_id)
     if uid in _cache["users"]:
-        for k in ("points", "wins", "losses", "draws", "rating", "referrals"):
+        for k in ("points", "wins", "losses", "draws", "rating", "referrals", "streak_count"):
             if k in kwargs:
                 kwargs[k] = _safe_int(kwargs[k])
         _cache["users"][uid].update(kwargs)
@@ -362,7 +368,7 @@ def get_avg_rating():
         return 0, 0
     return round(sum(ratings) / len(ratings), 1), len(ratings)
 
-# ── دوال إدارة المستخدمين (تمت إضافتها) ─────────────────────
+# ── دوال إدارة المستخدمين ─────────────────────
 def is_banned(user_id):
     u = get_user(user_id)
     return u.get("banned", False) if u else False
@@ -384,7 +390,7 @@ def get_referral_count(user_id):
     u = get_user(user_id)
     return _safe_int(u.get("referrals")) if u else 0
 
-# ── دوال القنوات (موجودة بالفعل) ────────────────────────────
+# ── دوال القنوات ─────────────────────────────
 def add_active_channel(channel_id, title):
     if not _initialized:
         init_cache()
