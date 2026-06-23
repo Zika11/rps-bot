@@ -1,0 +1,8 @@
+RPS-Bot/
+├── bot.py
+├── db.py
+├── requirements.txt
+├── lang/
+│   ├── ar.json
+│   └── en.json
+└── .gitignore
