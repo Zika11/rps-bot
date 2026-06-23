@@ -330,7 +330,7 @@ async def check_achievements(user_id, context):
                 if str(clan["leader_id"]) == str(user_id): current = 1; break
         elif field == "clan_joined": current = 1 if u.get("clan") else 0
         elif field == "tournament_win": current = int(u.get("tournament_wins",0))
-        elif field == "rated": current = 1 if str(user_id) in db._cache.get("ratings", {}) else 0
+        elif field == "rated": current = 1 if db.get_avg_rating()[1] > 0 else 0
         elif field == "achievements_count": current = len(earned)
         elif field == "rock_used": current = int(u.get("rock_used",0))
         elif field == "win_streak": current = int(u.get("win_streak",0))
