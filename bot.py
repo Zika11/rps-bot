@@ -1,16 +1,15 @@
 import os
 import random
 import asyncio
-from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember
+from datetime import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     ContextTypes, MessageHandler, filters
 )
-from telegram import error as tg_error  # لمعالجة أخطاء تيليجرام
+from telegram import error as tg_error
 import db
 
-# ── الإعدادات الأساسية ──────────────────────────────────────────────
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("❌ BOT_TOKEN غير موجود في متغيرات البيئة!")
@@ -20,12 +19,13 @@ FOUNDER_ID = 1232067711
 CHOICES = {"rock": "🪨 حجر", "paper": "📄 ورقة", "scissors": "✂️ مقص"}
 WIN_MAP = {"rock": "scissors", "scissors": "paper", "paper": "rock"}
 
-pending_matches = []          # طابور اللعب العشوائي
-active_games = {}             # مباريات الصديق والعشوائي (مع time-out)
-channel_auto_game = {}        # الجروبات المُفعّل فيها اللعب التلقائي
-channel_last_play = {}        # آخر وقت لعب في كل جروب
+pending_matches = []
+active_games = {}
+channel_auto_game = {}
+channel_last_play = {}
 
-# ── دوال مساعدة ──────────────────────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────
+
 def get_result(p1, p2):
     if p1 == p2: return "draw"
     return "win" if WIN_MAP[p1] == p2 else "loss"
@@ -82,13 +82,11 @@ def channel_keyboard(channel_id):
     ]])
 
 def stars_keyboard():
-    """تقييم موزع على صفين لتجنب الازدحام"""
     options = [1, 5, 10, 20, 30, 40, 50]
-    rows = []
-    # الصف الأول 4 نجوم
-    rows.append([InlineKeyboardButton(f"{'⭐'*(min(s//10+1,3))} {s}", callback_data=f"rate_{s}") for s in options[:4]])
-    # الصف الثاني 3 نجوم المتبقية
-    rows.append([InlineKeyboardButton(f"{'⭐'*(min(s//10+1,3))} {s}", callback_data=f"rate_{s}") for s in options[4:]])
+    rows = [
+        [InlineKeyboardButton(f"{'⭐'*(min(s//10+1,3))} {s}", callback_data=f"rate_{s}") for s in options[:4]],
+        [InlineKeyboardButton(f"{'⭐'*(min(s//10+1,3))} {s}", callback_data=f"rate_{s}") for s in options[4:]],
+    ]
     rows.append([InlineKeyboardButton("🔙 رجوع", callback_data="menu_main")])
     return InlineKeyboardMarkup(rows)
 
@@ -106,23 +104,20 @@ def founder_keyboard():
         [InlineKeyboardButton("🔙 رجوع", callback_data="menu_main")],
     ])
 
-# ── وظيفة للحصول على معرفات المستخدمين بأمان ──────────────────────────
 def get_all_user_ids():
-    """إرجاع قائمة بمعرفات جميع المستخدمين من قاعدة البيانات (تجنب الوصول المباشر لـ cache)"""
     try:
         return list(db._cache["users"].keys())
     except Exception:
         return []
 
-# ── أوامر البوت ──────────────────────────────────────────────────────
+# ── Commands ──────────────────────────────────────────────────────────
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-
-    # معالجة الإحالات والتحديات عبر الرابط العميق
     ref_bonus = False
+
     if context.args:
         arg = context.args[0]
-        # رابط دعوة
         if arg.startswith("ref_"):
             ref_id = arg.replace("ref_", "")
             existing = db.get_user(user.id)
@@ -132,7 +127,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pts = int(referrer.get("points", 0) or 0)
                     db.update_user(int(ref_id), points=pts + 1000)
                     ref_bonus = True
-        # رابط تحدي صديق
         elif arg.startswith("challenge_"):
             game_id = arg.replace("challenge_", "")
             game = active_games.get(game_id)
@@ -145,7 +139,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if game["p2"] is not None:
                 await update.message.reply_text("❌ هذا التحدي ممتلئ بالفعل!")
                 return
-            # انضمام اللاعب الثاني
             game["p2"] = user.id
             game["p2_name"] = user.first_name
             db.get_or_create_user(user.id, user.first_name, user.username)
@@ -154,32 +147,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ تم قبول التحدي! ⚔️ *{game['p1_name']}* vs *{user.first_name}*",
                 parse_mode="Markdown"
             )
-            # إرسال أزرار الاختيار للطرفين
             kb = mp_keyboard(game_id)
             await context.bot.send_message(game["p1"], "اللعبة بدأت! اختار حركتك 👇", reply_markup=kb)
             await context.bot.send_message(user.id, "اختار حركتك 👇", reply_markup=kb)
-            return  # لا نعرض القائمة الرئيسية بعد الانضمام
+            return
 
-    # إنشاء/تسجيل المستخدم
     db.get_or_create_user(user.id, user.first_name, user.username)
-
     u = db.get_user(user.id)
     if u and u.get("banned"):
         await update.message.reply_text("🚫 أنت محظور من استخدام البوت.")
         return
 
-    text = (
-        f"أهلاً *{user.first_name}*! 👋\n\n"
-        f"🎮 *لعبة حجر ورقة مقص*\n"
-        f"اختار من القائمة 👇"
-    )
+    text = f"أهلاً *{user.first_name}*! 👋\n\n🎮 *لعبة حجر ورقة مقص*\nاختار من القائمة 👇"
     if ref_bonus:
         text += "\n\n🎁 تم منح صاحبك 1000 نقطة على دعوتك!"
-
-    await update.message.reply_text(
-        text, parse_mode="Markdown",
-        reply_markup=main_menu_keyboard(user.id)
-    )
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_menu_keyboard(user.id))
 
 async def activate_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -202,30 +184,21 @@ async def auto_channel_loop(context, channel_id):
             del channel_auto_game[channel_id]
             db.remove_active_channel(channel_id)
             try:
-                await context.bot.send_message(
-                    channel_id,
-                    "😴 مفيش لاعبين من 30 دقيقة — تم إيقاف اللعب التلقائي.\nابعت /activate عشان تشغله تاني."
-                )
+                await context.bot.send_message(channel_id, "😴 مفيش لاعبين من 30 دقيقة — تم إيقاف اللعب التلقائي.\nابعت /activate عشان تشغله تاني.")
             except Exception:
                 pass
             break
         try:
-            await context.bot.send_message(
-                channel_id,
-                "🎮 *جولة جديدة!* اضغط حركتك 👇",
-                parse_mode="Markdown",
-                reply_markup=channel_keyboard(channel_id)
-            )
+            await context.bot.send_message(channel_id, "🎮 *جولة جديدة!* اضغط حركتك 👇", parse_mode="Markdown", reply_markup=channel_keyboard(channel_id))
         except (tg_error.Forbidden, tg_error.BadRequest, tg_error.ChatNotFound):
-            # تم طرد البوت أو حظره – إيقاف الحلقة وتنظيف البيانات
             del channel_auto_game[channel_id]
             db.remove_active_channel(channel_id)
             break
         except Exception:
-            # أخطاء أخرى مؤقتة نستمر
             pass
 
-# ── المعالج الرئيسي للأزرار ─────────────────────────────────────────
+# ── Main Button Handler ───────────────────────────────────────────────
+
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -238,7 +211,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🚫 أنت محظور من استخدام البوت.")
         return
 
-    # ── القائمة الرئيسية ──
+    # ── Main Menu ──
     if data == "menu_main":
         await query.edit_message_text(
             f"أهلاً *{user.first_name}*! 👋\n\n🎮 *لعبة حجر ورقة مقص*\nاختار من القائمة 👇",
@@ -248,7 +221,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_play":
         await query.edit_message_text("🎮 اختار نوع اللعب:", reply_markup=play_menu_keyboard())
 
-    # ── لعب فردي ──
+    # ── Solo ──
     elif data == "play_solo":
         await query.edit_message_text("🤖 اختار حركتك:", reply_markup=solo_keyboard())
 
@@ -276,8 +249,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.update_user(user.id, points=pts, wins=wins, losses=losses, draws=draws)
 
         await query.edit_message_text(
-            f"انت: {CHOICES[choice]}\nالبوت: {CHOICES[bot_choice]}\n\n"
-            f"{emoji} *{txt}*  (+{pts_add} نقطة)\n💰 نقاطك: {pts}",
+            f"انت: {CHOICES[choice]}\nالبوت: {CHOICES[bot_choice]}\n\n{emoji} *{txt}*  (+{pts_add} نقطة)\n💰 نقاطك: {pts}",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 العب تاني", callback_data="play_solo")],
@@ -285,30 +257,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
         )
 
-    # ── لعب مع صديق ──
+    # ── Friend ──
     elif data == "play_friend":
         game_id = f"f_{user.id}_{random.randint(1000,9999)}"
         active_games[game_id] = {
             "p1": user.id, "p1_name": user.first_name,
             "p2": None, "p2_name": None, "c1": None, "c2": None,
-            "created_at": datetime.now()   # مؤقت صلاحية اللعبة
+            "created_at": datetime.now()
         }
         bot_username = context.bot.username
         deep_link = f"https://t.me/{bot_username}?start=challenge_{game_id}"
         text = (
-            f"⚔️ *تحدي جاهز!*\n\n"
-            f"شارك هذا الرابط مع صديقك:\n"
-            f"[اضغط هنا للدخول]({deep_link})\n\n"
-            f"أو أرسل له النص: `{deep_link}`\n\n"
-            f"في انتظار الخصم..."
+            f"⚔️ *تحدي جاهز!*\n\nشارك هذا الرابط مع صديقك:\n[اضغط هنا للدخول]({deep_link})\n\nأو أرسل له النص: `{deep_link}`\n\nفي انتظار الخصم..."
         )
-        await query.edit_message_text(
-            text, parse_mode="Markdown",
-            disable_web_page_preview=True,
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("❌ إلغاء التحدي", callback_data=f"cancel_challenge_{game_id}")
-            ]])
-        )
+        await query.edit_message_text(text, parse_mode="Markdown", disable_web_page_preview=True,
+                                      reply_markup=InlineKeyboardMarkup([[
+                                          InlineKeyboardButton("❌ إلغاء التحدي", callback_data=f"cancel_challenge_{game_id}")
+                                      ]]))
 
     elif data.startswith("cancel_challenge_"):
         game_id = data.replace("cancel_challenge_", "")
@@ -328,10 +293,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ اللعبة انتهت.")
             return
 
-        # التحقق من صلاحية اللعبة (120 ثانية)
         created = game.get("created_at")
         if created and (datetime.now() - created).seconds > 120:
-            # إبلاغ الطرفين ثم حذف اللعبة
             await query.edit_message_text("⌛ انتهت صلاحية التحدي.")
             try:
                 await context.bot.send_message(game["p1"], "⌛ انتهت صلاحية التحدي لعدم اكتماله.")
@@ -378,9 +341,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(game["p2"], summary + f"*{r2}*", parse_mode="Markdown")
             del active_games[game_id]
 
-    # ── لعب عشوائي ──
+    # ── Random ──
     elif data == "play_random":
-        # منع الازدواج
         if any(m["id"] == user.id for m in pending_matches):
             await query.answer("أنت بالفعل في قائمة الانتظار!", show_alert=True)
             return
@@ -399,18 +361,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(opponent["id"], f"✅ لاقيت خصم: *{user.first_name}*\nاختار حركتك 👇", parse_mode="Markdown", reply_markup=kb)
         else:
             pending_matches.append({"id": user.id, "name": user.first_name})
-            await query.edit_message_text(
-                "🔍 بندور على خصم... استنى!",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("❌ إلغاء", callback_data="cancel_random")
-                ]])
-            )
+            await query.edit_message_text("🔍 بندور على خصم... استنى!",
+                                          reply_markup=InlineKeyboardMarkup([[
+                                              InlineKeyboardButton("❌ إلغاء", callback_data="cancel_random")
+                                          ]]))
 
     elif data == "cancel_random":
         pending_matches[:] = [m for m in pending_matches if m["id"] != user.id]
         await query.edit_message_text("✅ تم الإلغاء.", reply_markup=main_menu_keyboard(user.id))
 
-    # ── قنوات/جروبات ──
+    # ── Channel ──
     elif data == "play_channel":
         channels = db.get_active_channels()
         bot_username = context.bot.username
@@ -451,18 +411,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt = "كسبت!" if result == "win" else ("تعادل!" if result == "draw" else "خسرت!")
         await query.answer(f"{emoji} {txt} (+{pts_add} نقطة)", show_alert=True)
 
-    # ── التصنيف ──
+    # ── Rank ──
     elif data == "menu_rank":
-        await query.edit_message_text(
-            "🏆 اختار نوع التصنيف:",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📅 يومي", callback_data="rank_daily"),
-                 InlineKeyboardButton("📆 أسبوعي", callback_data="rank_weekly")],
-                [InlineKeyboardButton("🗓️ شهري", callback_data="rank_monthly"),
-                 InlineKeyboardButton("📊 إجمالي", callback_data="rank_all")],
-                [InlineKeyboardButton("🔙 رجوع", callback_data="menu_main")]
-            ])
-        )
+        await query.edit_message_text("🏆 اختار نوع التصنيف:",
+                                      reply_markup=InlineKeyboardMarkup([
+                                          [InlineKeyboardButton("📅 يومي", callback_data="rank_daily"),
+                                           InlineKeyboardButton("📆 أسبوعي", callback_data="rank_weekly")],
+                                          [InlineKeyboardButton("🗓️ شهري", callback_data="rank_monthly"),
+                                           InlineKeyboardButton("📊 إجمالي", callback_data="rank_all")],
+                                          [InlineKeyboardButton("🔙 رجوع", callback_data="menu_main")]
+                                      ]))
 
     elif data.startswith("rank_"):
         period = data.replace("rank_", "")
@@ -477,7 +435,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += "مفيش لاعبين لسه!"
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_btn("menu_rank"))
 
-    # ── حسابي ──
+    # ── Profile ──
     elif data == "menu_profile":
         u = db.get_user(user.id)
         total = int(u.get("wins",0)) + int(u.get("losses",0)) + int(u.get("draws",0))
@@ -499,22 +457,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_btn())
 
-    # ── دعوة صديق ──
+    # ── Referral ──
     elif data == "menu_referral":
         bot_username = context.bot.username
         ref_link = f"https://t.me/{bot_username}?start=ref_{user.id}"
         u = db.get_user(user.id)
         refs = int(u.get("referrals", 0) or 0)
         text = (
-            f"🔗 *رابط الدعوة بتاعك*\n\n"
-            f"`{ref_link}`\n\n"
+            f"🔗 *رابط الدعوة بتاعك*\n\n`{ref_link}`\n\n"
             f"👥 عدد من دعوتهم: {refs}\n"
             f"💰 مكافأة كل دعوة: 1000 نقطة\n\n"
             f"ابعت الرابط لأصحابك وكسب نقاط!"
         )
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_btn())
 
-    # ── المهام ──
+    # ── Tasks ──
     elif data == "menu_tasks":
         tasks = db.get_tasks("daily")
         text = "🎁 *المهام اليومية*\n\nأكمل المهام واكسب نقاط إضافية!\n\n"
@@ -526,7 +483,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"• {t['description']} — 💰 {t['points_reward']} نقطة\n"
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_btn())
 
-    # ── المتجر ──
+    # ── Shop ──
     elif data == "menu_shop":
         items = db.get_shop_items()
         u = db.get_user(user.id)
@@ -535,10 +492,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         btns = []
         for item in items:
             text += f"{item['emoji']} *{item['name']}* — {item['price']} نقطة\n_{item['description']}_\n\n"
-            btns.append([InlineKeyboardButton(
-                f"{item['emoji']} {item['name']} ({item['price']} نقطة)",
-                callback_data=f"buy_{item['item_id']}"
-            )])
+            btns.append([InlineKeyboardButton(f"{item['emoji']} {item['name']} ({item['price']} نقطة)", callback_data=f"buy_{item['item_id']}")])
         btns.append([InlineKeyboardButton("🔙 رجوع", callback_data="menu_main")])
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(btns))
 
@@ -563,7 +517,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.update_user(user.id, points=pts-price, shop_items=new_items)
         await query.answer(f"✅ اشتريت {item['name']}!", show_alert=True)
 
-    # ── العشائر ──
+    # ── Clans ──
     elif data == "menu_clans":
         clans = db.get_all_clans()
         u = db.get_user(user.id)
@@ -587,10 +541,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(btns))
 
     elif data == "clan_create":
-        await query.edit_message_text(
-            "✏️ ابعت اسم العشيرة (من 2 لـ 20 حرف):",
-            reply_markup=back_btn("menu_clans")
-        )
+        await query.edit_message_text("✏️ ابعت اسم العشيرة (من 2 لـ 20 حرف):", reply_markup=back_btn("menu_clans"))
         context.user_data["awaiting"] = "clan_name"
         context.user_data["awaiting_time"] = datetime.now()
 
@@ -625,8 +576,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         members_count = len(str(clan.get("members","")).split(",")) if clan.get("members") else 0
         is_leader = str(user.id) == str(clan.get("leader_id",""))
         text = (
-            f"🗡️ *{clan_name}*\n\n"
-            f"👥 الأعضاء: {members_count}\n"
+            f"🗡️ *{clan_name}*\n\n👥 الأعضاء: {members_count}\n"
             f"💰 النقاط: {clan.get('points',0)}\n"
             f"📝 الوصف: {clan.get('description','') or 'لا يوجد'}\n"
         )
@@ -649,8 +599,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("clan_manage_"):
         clan_name = data.replace("clan_manage_", "")
         await query.edit_message_text(
-            f"⚙️ *إدارة عشيرة {clan_name}*",
-            parse_mode="Markdown",
+            f"⚙️ *إدارة عشيرة {clan_name}*", parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("✏️ تعديل الوصف", callback_data=f"clan_desc_{clan_name}")],
                 [InlineKeyboardButton("🔙 رجوع", callback_data=f"clan_view_{clan_name}")]
@@ -663,30 +612,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["awaiting_time"] = datetime.now()
         await query.edit_message_text("✏️ ابعت الوصف الجديد للعشيرة:", reply_markup=back_btn(f"clan_manage_{clan_name}"))
 
-    # ── طريقة اللعب ──
+    # ── How to play ──
     elif data == "menu_howto":
         text = (
             "❓ *طريقة اللعب*\n\n"
-            "🪨 حجر يكسر ✂️ مقص\n"
-            "✂️ مقص يقطع 📄 ورقة\n"
-            "📄 ورقة تغطي 🪨 حجر\n\n"
+            "🪨 حجر يكسر ✂️ مقص\n✂️ مقص يقطع 📄 ورقة\n📄 ورقة تغطي 🪨 حجر\n\n"
             "🎮 *أنواع اللعب:*\n"
-            "• فردي — ضد البوت\n"
-            "• مع صديق — ابعت تحدي\n"
-            "• عشوائي — مع لاعب عشوائي\n"
-            "• قنوات — لعب تلقائي كل 30 ثانية\n\n"
-            "💰 *النقاط:*\n"
-            "• فوز = 10 نقطة\n"
-            "• تعادل = 5 نقاط\n"
-            "• خسارة = 2 نقطة\n"
-            "• دعوة صديق = 1000 نقطة\n\n"
-            "🗡️ العشائر — انضم وتنافس\n"
-            "🎁 المهام — نقاط إضافية\n"
-            "🛒 المتجر — اشتري أيتمز"
+            "• فردي — ضد البوت\n• مع صديق — ابعت تحدي\n• عشوائي — مع لاعب عشوائي\n• قنوات — لعب تلقائي كل 30 ثانية\n\n"
+            "💰 *النقاط:*\n• فوز = 10 نقطة\n• تعادل = 5 نقاط\n• خسارة = 2 نقطة\n• دعوة صديق = 1000 نقطة\n\n"
+            "🗡️ العشائر — انضم وتنافس\n🎁 المهام — نقاط إضافية\n🛒 المتجر — اشتري أيتمز"
         )
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_btn())
 
-    # ── تقييم ──
+    # ── Rate ──
     elif data == "menu_rate":
         avg, count = db.get_avg_rating()
         await query.edit_message_text(
@@ -699,14 +637,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.add_rating(user.id, stars)
         await query.edit_message_text(f"✅ شكراً! ديت {stars} نجمة ⭐", reply_markup=back_btn())
 
-    # ── دعم ──
+    # ── Support ──
     elif data == "menu_support":
-        await query.edit_message_text(
-            "💎 *دعم البوت*\n\n⭐ قيّم البوت\n📢 شارك مع أصحابك\n💬 ابعت اقتراحاتك",
-            parse_mode="Markdown", reply_markup=back_btn()
-        )
+        await query.edit_message_text("💎 *دعم البوت*\n\n⭐ قيّم البوت\n📢 شارك مع أصحابك\n💬 ابعت اقتراحاتك", parse_mode="Markdown", reply_markup=back_btn())
 
-    # ── القنوات ──
+    # ── Channels info ──
     elif data == "menu_channels":
         channels = db.get_active_channels()
         text = "📺 *القنوات والجروبات النشطة*\n\n"
@@ -718,16 +653,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "\nعشان تفعّل في جروبك:\n1. ضيف البوت واعمله Admin\n2. ابعت /activate"
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_btn())
 
-    # ── لوحة المؤسس ──
+    # ── Founder Panel ──
     elif data == "founder_panel":
         if not is_founder(user.id):
             await query.answer("❌ مش مسموحلك!", show_alert=True)
             return
         users_count = len(db._cache["users"])
-        await query.edit_message_text(
-            f"👑 *لوحة المؤسس*\n\n👥 إجمالي اللاعبين: {users_count}",
-            parse_mode="Markdown", reply_markup=founder_keyboard()
-        )
+        await query.edit_message_text(f"👑 *لوحة المؤسس*\n\n👥 إجمالي اللاعبين: {users_count}", parse_mode="Markdown", reply_markup=founder_keyboard())
 
     elif data == "f_stats":
         if not is_founder(user.id): return
@@ -735,10 +667,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clans_count = len(db._cache["clans"])
         avg, count = db.get_avg_rating()
         text = (
-            f"📊 *إحصائيات البوت*\n\n"
-            f"👥 اللاعبين: {users_count}\n"
-            f"🗡️ العشائر: {clans_count}\n"
-            f"⭐ متوسط التقييم: {avg}/50 ({count} تقييم)\n"
+            f"📊 *إحصائيات البوت*\n\n👥 اللاعبين: {users_count}\n"
+            f"🗡️ العشائر: {clans_count}\n⭐ متوسط التقييم: {avg}/50 ({count} تقييم)\n"
             f"📺 جروبات نشطة: {len(channel_auto_game)}"
         )
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_btn("founder_panel"))
@@ -746,10 +676,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "f_ratings":
         if not is_founder(user.id): return
         avg, count = db.get_avg_rating()
-        await query.edit_message_text(
-            f"⭐ *التقييمات*\n\nمتوسط: {avg}/50\nعدد التقييمات: {count}",
-            parse_mode="Markdown", reply_markup=back_btn("founder_panel")
-        )
+        await query.edit_message_text(f"⭐ *التقييمات*\n\nمتوسط: {avg}/50\nعدد التقييمات: {count}", parse_mode="Markdown", reply_markup=back_btn("founder_panel"))
 
     elif data in ("f_addpts", "f_subpts", "f_ban", "f_unban", "f_broadcast"):
         if not is_founder(user.id): return
@@ -762,25 +689,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         context.user_data["awaiting"] = data
         context.user_data["awaiting_time"] = datetime.now()
-        await query.edit_message_text(
-            f"👑 {prompts[data]}",
-            reply_markup=back_btn("founder_panel")
-        )
+        await query.edit_message_text(f"👑 {prompts[data]}", reply_markup=back_btn("founder_panel"))
 
     elif data in ("f_shop", "f_tasks"):
         if not is_founder(user.id): return
-        await query.edit_message_text(
-            "🔧 إدارة المتجر والمهام قريباً!",
-            reply_markup=back_btn("founder_panel")
-        )
+        await query.edit_message_text("🔧 إدارة المتجر والمهام قريباً!", reply_markup=back_btn("founder_panel"))
 
-# ── معالج النصوص ────────────────────────────────────────────────────
+# ── Text Handler ──────────────────────────────────────────────────────
+
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     awaiting = context.user_data.get("awaiting", "")
     text = update.message.text.strip()
 
-    # التحقق من انتهاء صلاحية awaiting (أكثر من 120 ثانية)
     awaiting_time = context.user_data.get("awaiting_time")
     if awaiting and awaiting_time:
         if (datetime.now() - awaiting_time).total_seconds() > 120:
@@ -813,7 +734,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["awaiting_time"] = None
         await update.message.reply_text("✅ تم تحديث الوصف!", reply_markup=main_menu_keyboard(user.id))
 
-    # ── أوامر المؤسس ──
     elif awaiting == "f_addpts" and is_founder(user.id):
         parts = text.split()
         if len(parts) == 3 and parts[0] == "add_pts":
@@ -859,15 +779,12 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(parts) == 2 and parts[0] == "broadcast":
             msg = parts[1]
             sent = 0
-            # استخدام قائمة منفصلة لتجنب تغيير القاموس أثناء التكرار
             user_ids = get_all_user_ids()
             for uid in user_ids:
                 try:
                     await context.bot.send_message(int(uid), msg, disable_notification=True)
                     sent += 1
                 except tg_error.Forbidden:
-                    # المستخدم حظر البوت – يمكن تعطيله بدلاً من حذفه إذا أردت
-                    # db.set_user_inactive(uid)
                     pass
                 except Exception:
                     pass
@@ -877,6 +794,12 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
+    if not TOKEN:
+        raise ValueError("BOT_TOKEN غير موجود!")
+
+    # ✅ تحميل الكاش من Google Sheets مرة واحدة قبل بدء البوت
+    db.init_cache()
+
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("activate", activate_channel))
