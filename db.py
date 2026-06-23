@@ -43,7 +43,8 @@ _cache = {
     "shop": [],
     "ratings": {},
     "channels": {},
-    "tournaments": {}
+    "tournaments": {},
+    "achievements": []
 }
 _dirty = {
     "users": set(),
@@ -82,6 +83,7 @@ def _load_all():
     _load_shop()
     _load_ratings()
     _load_tournaments()
+    _load_achievements()
 
 def _load_users():
     ws = get_sheet("users")
@@ -90,7 +92,10 @@ def _load_users():
             "user_id","name","username","points","clan",
             "wins","losses","draws","rating","daily_tasks",
             "shop_items","tasks_progress","referrals","banned","referred",
-            "streak_count","last_claim_date","daily_claimed"
+            "streak_count","last_claim_date","daily_claimed","achievements",
+            "solo_games","random_games","friend_games","channel_games",
+            "tournament_wins","rock_used","paper_used","scissors_used",
+            "win_streak","bo3_wins","bo3_losses","login_streak","days_since_register"
         ])
         return
     records = ws.get_all_records()
@@ -114,7 +119,21 @@ def _load_users():
             "referred": _safe_bool(r.get("referred")),
             "streak_count": _safe_int(r.get("streak_count")),
             "last_claim_date": r.get("last_claim_date", ""),
-            "daily_claimed": _safe_bool(r.get("daily_claimed"))
+            "daily_claimed": _safe_bool(r.get("daily_claimed")),
+            "achievements": r.get("achievements", ""),
+            "solo_games": _safe_int(r.get("solo_games")),
+            "random_games": _safe_int(r.get("random_games")),
+            "friend_games": _safe_int(r.get("friend_games")),
+            "channel_games": _safe_int(r.get("channel_games")),
+            "tournament_wins": _safe_int(r.get("tournament_wins")),
+            "rock_used": _safe_int(r.get("rock_used")),
+            "paper_used": _safe_int(r.get("paper_used")),
+            "scissors_used": _safe_int(r.get("scissors_used")),
+            "win_streak": _safe_int(r.get("win_streak")),
+            "bo3_wins": _safe_int(r.get("bo3_wins")),
+            "bo3_losses": _safe_int(r.get("bo3_losses")),
+            "login_streak": _safe_int(r.get("login_streak")),
+            "days_since_register": _safe_int(r.get("days_since_register"))
         }
 
 def _load_clans():
@@ -208,6 +227,56 @@ def _load_tournaments():
             "prize": _safe_int(r.get("prize", 500)),
             "created_at": r.get("created_at", str(datetime.now()))
         }
+
+def _load_achievements():
+    ws = get_sheet("achievements")
+    if not ws.row_values(1):
+        ws.append_row(["ach_id","name","description","icon","condition_field","condition_value"])
+        default_achievements = [
+            ["ach_1", "أول خطوة", "سجل في البوت لأول مرة", "🌟", "registered", "1"],
+            ["ach_2", "المحارب", "العب 10 جولات فردية", "⚔️", "solo_games", "10"],
+            ["ach_3", "الأسطورة", "اكسب 50 جولة", "👑", "wins", "50"],
+            ["ach_4", "صياد النقاط", "اجمع 5000 نقطة", "💰", "points", "5000"],
+            ["ach_5", "المغامر", "العب 5 جولات عشوائية", "🎲", "random_games", "5"],
+            ["ach_6", "الصديق الوفي", "العب 10 جولات مع أصدقاء", "🤝", "friend_games", "10"],
+            ["ach_7", "ملك القنوات", "العب 20 جولة في القنوات", "📺", "channel_games", "20"],
+            ["ach_8", "النجم اليومي", "احصل على مكافأة يومية 7 أيام متتالية", "📅", "streak", "7"],
+            ["ach_9", "المحترف", "اكسب 3 جولات متتالية", "🔥", "win_streak", "3"],
+            ["ach_10", "بطل البطولة", "فوز ببطولة", "🏆", "tournament_win", "1"],
+            ["ach_11", "الداعم", "ادعُ 3 أصدقاء", "📢", "referrals", "3"],
+            ["ach_12", "الجامع", "اجمع 10 بطاقات من المتجر", "🎒", "items_owned", "10"],
+            ["ach_13", "المقيّم", "قيم البوت", "⭐", "rated", "1"],
+            ["ach_14", "مؤسس العشيرة", "أنشئ عشيرة", "🏛️", "clan_created", "1"],
+            ["ach_15", "عضو العشيرة", "انضم لعشيرة", "👥", "clan_joined", "1"],
+            ["ach_16", "البطل الخارق", "اكسب 100 جولة", "💪", "wins", "100"],
+            ["ach_17", "مليونير النقاط", "اجمع 50000 نقطة", "💎", "points", "50000"],
+            ["ach_18", "المغامر الأسطوري", "العب 100 جولة عشوائية", "🌍", "random_games", "100"],
+            ["ach_19", "صديق الكل", "العب 50 جولة مع أصدقاء", "💖", "friend_games", "50"],
+            ["ach_20", "ملك الشارات", "اجمع 15 إنجاز", "🎖️", "achievements_count", "15"],
+            ["ach_21", "المقاتل الليلي", "العب بعد منتصف الليل", "🌙", "night_play", "1"],
+            ["ach_22", "الصبور", "اخسر 20 جولة", "😅", "losses", "20"],
+            ["ach_23", "المتوازن", "تعادل في 10 جولات", "⚖️", "draws", "10"],
+            ["ach_24", "المثابر", "ادخل البوت 5 أيام متتالية", "🗓️", "login_streak", "5"],
+            ["ach_25", "الوفي", "استخدم البوت لمدة 30 يوم", "📆", "days_since_register", "30"],
+            ["ach_26", "المقامر", "اربح جولة عشوائية", "🎰", "random_win", "1"],
+            ["ach_27", "السريع", "اربح جولة في القناة", "⚡", "channel_win", "1"],
+            ["ach_28", "الخبير", "اكسب 5 جولات BO3", "🧠", "bo3_wins", "5"],
+            ["ach_29", "المقاتل", "اخسر جولة BO3", "🥊", "bo3_losses", "1"],
+            ["ach_30", "ملك الحجر", "استخدم الحجر 50 مرة", "🪨", "rock_used", "50"],
+        ]
+        ws.append_rows(default_achievements)
+        _cache["achievements"] = [
+            {"ach_id": r[0], "name": r[1], "description": r[2], "icon": r[3],
+             "condition_field": r[4], "condition_value": _safe_int(r[5])}
+            for r in default_achievements
+        ]
+        return
+    _cache["achievements"] = [
+        {"ach_id": r["ach_id"], "name": r["name"], "description": r["description"],
+         "icon": r["icon"], "condition_field": r["condition_field"],
+         "condition_value": _safe_int(r["condition_value"])}
+        for r in ws.get_all_records()
+    ]
 
 def _sync_loop():
     while True:
@@ -317,7 +386,12 @@ def get_or_create_user(user_id, name, username):
             "points": 0, "clan": "", "wins": 0, "losses": 0,
             "draws": 0, "rating": 0, "daily_tasks": "", "shop_items": "",
             "tasks_progress": "", "referrals": 0, "banned": False, "referred": False,
-            "streak_count": 0, "last_claim_date": "", "daily_claimed": False
+            "streak_count": 0, "last_claim_date": "", "daily_claimed": False,
+            "achievements": "",
+            "solo_games": 0, "random_games": 0, "friend_games": 0, "channel_games": 0,
+            "tournament_wins": 0, "rock_used": 0, "paper_used": 0, "scissors_used": 0,
+            "win_streak": 0, "bo3_wins": 0, "bo3_losses": 0, "login_streak": 0,
+            "days_since_register": 0
         }
         _cache["users"][uid] = u
         with _lock:
@@ -334,7 +408,10 @@ def update_user(user_id, **kwargs):
         init_cache()
     uid = str(user_id)
     if uid in _cache["users"]:
-        for k in ("points", "wins", "losses", "draws", "rating", "referrals", "streak_count"):
+        for k in ("points", "wins", "losses", "draws", "rating", "referrals", "streak_count",
+                  "solo_games", "random_games", "friend_games", "channel_games",
+                  "tournament_wins", "rock_used", "paper_used", "scissors_used",
+                  "win_streak", "bo3_wins", "bo3_losses", "login_streak", "days_since_register"):
             if k in kwargs:
                 kwargs[k] = _safe_int(kwargs[k])
         _cache["users"][uid].update(kwargs)
@@ -493,3 +570,22 @@ def update_tournament(tournament_id, **kwargs):
         _cache["tournaments"][tournament_id].update(kwargs)
         with _lock:
             _dirty["tournaments"].add(tournament_id)
+
+# ── الإنجازات ───────────────────────────────────────────────
+def get_achievements():
+    if not _initialized:
+        init_cache()
+    return _cache["achievements"]
+
+def add_achievement(user_id, ach_id):
+    if not _initialized:
+        init_cache()
+    u = get_user(user_id)
+    if not u:
+        return False
+    earned = u.get("achievements", "").split(",") if u.get("achievements") else []
+    if ach_id in earned:
+        return False
+    earned.append(ach_id)
+    update_user(user_id, achievements=",".join(earned))
+    return True
