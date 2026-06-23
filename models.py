@@ -1,17 +1,18 @@
-import asyncio, aiosqlite
+import sqlite3
+import os
 
 DB_NAME = "rps_bot.db"
 
-async def get_db():
-    db = await aiosqlite.connect(DB_NAME)
-    db.row_factory = aiosqlite.Row
-    await db.execute("PRAGMA journal_mode=WAL")
-    await db.execute("PRAGMA foreign_keys=ON")
-    return db
+def get_connection():
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
 
-async def create_tables():
-    db = await get_db()
-    await db.executescript("""
+def create_tables():
+    conn = get_connection()
+    conn.executescript("""
         CREATE TABLE IF NOT EXISTS users (
             user_id TEXT PRIMARY KEY,
             name TEXT,
@@ -158,5 +159,5 @@ async def create_tables():
             winner_clan TEXT
         );
     """)
-    await db.commit()
-    await db.close()
+    conn.commit()
+    conn.close()
