@@ -57,12 +57,14 @@ def get_sheet(name, retries=5):
             else:
                 raise e
 
+# القاعدة الأساسية – الأوراق الثانوية تُترك None حتى تُحمّل عند الطلب
 _cache = {
     "users": {}, "clans": {}, "tasks": [], "shop": [], "ratings": {},
-    "channels": {}, "tournaments": {}, "achievements": [],
+    "channels": {},
+    "tournaments": None, "achievements": None,
     "friends": {}, "friend_requests": {},
-    "group_challenges": {}, "titles_shop": [], "themes_shop": [],
-    "events": [], "clan_wars": {}
+    "group_challenges": None, "titles_shop": None, "themes_shop": None,
+    "events": None, "clan_wars": None
 }
 _dirty = {
     "users": set(), "clans": set(), "ratings": set(), "tournaments": set()
@@ -88,30 +90,52 @@ def init_cache():
     t.start()
 
 def _load_all():
+    # الأساسية فقط
     _load_users()
-    time.sleep(1.5)
+    time.sleep(2)
     _load_clans()
-    time.sleep(1.5)
+    time.sleep(2)
     _load_tasks()
-    time.sleep(1.5)
+    time.sleep(2)
     _load_shop()
-    time.sleep(1.5)
+    time.sleep(2)
     _load_ratings()
-    time.sleep(1.5)
-    _load_tournaments()
-    time.sleep(1.5)
-    _load_achievements()
-    time.sleep(1.5)
-    _load_titles()
-    time.sleep(1.5)
-    _load_themes()
-    time.sleep(1.5)
-    _load_group_challenges()
-    time.sleep(1.5)
-    _load_events()
-    time.sleep(1.5)
-    _load_clan_wars()
+    # باقي الأوراق تُحمّل عند أول استخدام (lazy loading)
 
+# ── دوال التحميل المؤجل (تستدعى قبل أي وصول للبيانات الثانوية) ──
+def _ensure_tournaments():
+    if _cache["tournaments"] is None:
+        _cache["tournaments"] = {}
+        _load_tournaments()
+
+def _ensure_achievements():
+    if _cache["achievements"] is None:
+        _load_achievements()   # ستُنشئ قائمة فارغة إذا الورقة جديدة
+
+def _ensure_titles():
+    if _cache["titles_shop"] is None:
+        _load_titles()
+
+def _ensure_themes():
+    if _cache["themes_shop"] is None:
+        _load_themes()
+
+def _ensure_group_challenges():
+    if _cache["group_challenges"] is None:
+        _cache["group_challenges"] = {}
+        _load_group_challenges()
+
+def _ensure_events():
+    if _cache["events"] is None:
+        _cache["events"] = []
+        _load_events()
+
+def _ensure_clan_wars():
+    if _cache["clan_wars"] is None:
+        _cache["clan_wars"] = {}
+        _load_clan_wars()
+
+# ── دوال التحميل من Google Sheets (كما هي مع تعديلات بسيطة) ──
 def _load_users():
     ws = get_sheet("users")
     if not ws.row_values(1):
@@ -359,7 +383,7 @@ def _load_clan_wars():
             "winner_clan": r.get("winner_clan","")
         }
 
-# ── API ─────────────────────────────────────────────────────
+# ── واجهة API (مع استدعاء دوال التأجيل) ─────────────────────
 def get_or_create_user(user_id, name, username):
     if not _initialized: init_cache()
     uid = str(user_id)
@@ -465,9 +489,10 @@ def remove_active_channel(channel_id):
 def get_active_channels():
     with _lock: return list(_cache["channels"].values())
 
-# ─ـ بطولات ─ـ
+# ─ـ بطولات (مع استدعاء التأجيل) ─ـ
 def create_tournament(tournament_id, prize=500):
     if not _initialized: init_cache()
+    _ensure_tournaments()
     t = {"tournament_id": tournament_id, "status":"open", "players":"", "rounds":"[]", "winner_id":"", "prize":prize, "created_at":str(datetime.now())}
     _cache["tournaments"][tournament_id] = t
     with _lock: _dirty["tournaments"].add(tournament_id)
@@ -475,15 +500,18 @@ def create_tournament(tournament_id, prize=500):
 
 def get_active_tournament():
     if not _initialized: init_cache()
+    _ensure_tournaments()
     for t in _cache["tournaments"].values():
         if t["status"] in ("open","running"): return t
     return None
 
 def get_tournament(tournament_id):
     if not _initialized: init_cache()
+    _ensure_tournaments()
     return _cache["tournaments"].get(tournament_id)
 
 def join_tournament(tournament_id, user_id):
+    _ensure_tournaments()
     t = _cache["tournaments"].get(tournament_id)
     if not t or t["status"]!="open": return False
     players = t["players"].split(",") if t["players"] else []
@@ -494,6 +522,7 @@ def join_tournament(tournament_id, user_id):
     return True
 
 def update_tournament(tournament_id, **kwargs):
+    _ensure_tournaments()
     if tournament_id in _cache["tournaments"]:
         _cache["tournaments"][tournament_id].update(kwargs)
         with _lock: _dirty["tournaments"].add(tournament_id)
@@ -501,10 +530,11 @@ def update_tournament(tournament_id, **kwargs):
 # ─ـ إنجازات ─ـ
 def get_achievements():
     if not _initialized: init_cache()
+    _ensure_achievements()
     return _cache["achievements"]
 
 def add_achievement(user_id, ach_id):
-    if not _initialized: init_cache()
+    _ensure_achievements()
     u = get_user(user_id)
     if not u: return False
     earned = u.get("achievements","").split(",") if u.get("achievements") else []
@@ -513,7 +543,7 @@ def add_achievement(user_id, ach_id):
     update_user(user_id, achievements=",".join(earned))
     return True
 
-# ─ـ أصدقاء ─ـ
+# ─ـ أصدقاء (دون تغيير) ─ـ
 def get_friends(user_id):
     if not _initialized: init_cache()
     return _cache["friends"].get(str(user_id), [])
@@ -548,11 +578,15 @@ def remove_friend_request(user_id, from_id):
 
 # ─ـ تحديات جماعية ─ـ
 def create_group_challenge(challenge_id, group_id, target_wins, prize, duration_hours=24):
+    if not _initialized: init_cache()
+    _ensure_group_challenges()
     now = datetime.now(); end = now + timedelta(hours=duration_hours)
     c = {"challenge_id":challenge_id,"group_id":str(group_id),"target_wins":target_wins,"prize":prize,"start_date":str(now),"end_date":str(end),"participants":"{}","winner_id":""}
     _cache["group_challenges"][challenge_id] = c
 
 def get_active_group_challenge(group_id):
+    if not _initialized: init_cache()
+    _ensure_group_challenges()
     gid = str(group_id); now = datetime.now()
     for c in _cache["group_challenges"].values():
         if c["group_id"] == gid:
@@ -561,6 +595,7 @@ def get_active_group_challenge(group_id):
     return None
 
 def update_group_challenge_participant(challenge_id, user_id, wins):
+    _ensure_group_challenges()
     c = _cache["group_challenges"].get(challenge_id)
     if not c: return
     participants = json.loads(c["participants"])
@@ -570,11 +605,20 @@ def update_group_challenge_participant(challenge_id, user_id, wins):
         c["winner_id"] = str(user_id)
 
 # ─ـ ألقاب وثيمات ─ـ
-def get_titles_shop(): return _cache["titles_shop"]
-def get_themes_shop(): return _cache["themes_shop"]
+def get_titles_shop():
+    if not _initialized: init_cache()
+    _ensure_titles()
+    return _cache["titles_shop"]
+
+def get_themes_shop():
+    if not _initialized: init_cache()
+    _ensure_themes()
+    return _cache["themes_shop"]
 
 # ─ـ أحداث وحروب عشائر ─ـ
 def get_active_event():
+    if not _initialized: init_cache()
+    _ensure_events()
     now = datetime.now()
     for ev in _cache["events"]:
         start = datetime.fromisoformat(ev["start_date"]); end = datetime.fromisoformat(ev["end_date"])
@@ -582,6 +626,8 @@ def get_active_event():
     return None
 
 def get_active_clan_war():
+    if not _initialized: init_cache()
+    _ensure_clan_wars()
     now = datetime.now()
     for war in _cache["clan_wars"].values():
         start = datetime.fromisoformat(war["start_date"]); end = datetime.fromisoformat(war["end_date"])
@@ -596,6 +642,8 @@ def add_clan_war_points(clan_name, points):
     war["clan_points"] = json.dumps(pts)
 
 def create_clan_war(duration_days=7, prize_points=10000, prize_gems=50):
+    if not _initialized: init_cache()
+    _ensure_clan_wars()
     war_id = f"cw_{datetime.now().strftime('%Y%m%d%H%M%S')}"
     start = datetime.now(); end = start + timedelta(days=duration_days)
     war = {"war_id":war_id,"start_date":str(start),"end_date":str(end),"clan_points":"{}","winner_clan":"","prize_points":prize_points,"prize_gems":prize_gems}
@@ -603,6 +651,7 @@ def create_clan_war(duration_days=7, prize_points=10000, prize_gems=50):
     return war
 
 def end_clan_war(war_id):
+    _ensure_clan_wars()
     war = _cache["clan_wars"].get(war_id)
     if not war or war["winner_clan"]: return
     cp = json.loads(war["clan_points"])
@@ -616,6 +665,7 @@ def end_clan_war(war_id):
             update_user(int(mid), points=_safe_int(get_user(int(mid)).get("points",0)) + war.get("prize_points",0),
                        gems=_safe_int(get_user(int(mid)).get("gems",0)) + war.get("prize_gems",0))
 
+# ─ـ خيط المزامنة (دون تغيير) ──
 def _sync_loop():
     while True:
         time.sleep(30)
@@ -681,6 +731,7 @@ def _flush_tournaments():
     with _lock:
         dirty = list(_dirty["tournaments"]); _dirty["tournaments"].clear()
     if not dirty: return
+    _ensure_tournaments()  # تأكد من تحميل البطولات قبل مسحها
     ws = get_sheet("tournaments")
     headers = ws.row_values(1)
     all_rows = ws.get_all_values()
