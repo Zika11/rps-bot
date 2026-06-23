@@ -11,7 +11,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-# ── عميل Google Sheets مُخزَّن (يُبنى مرة واحدة) ────────────────────
+# ── Google Sheets client (يُبنى مرة واحدة) ──────────────────────────
 _client = None
 _client_lock = threading.Lock()
 
@@ -20,14 +20,16 @@ def get_client():
     if _client is not None:
         return _client
     with _client_lock:
-        if _client is not None:          # فحص مزدوج
+        if _client is not None:
             return _client
+        # --- تصحيح أمني: فرض استخدام متغير البيئة فقط ---
         creds_json = os.environ.get("GOOGLE_CREDS")
-        if creds_json:
-            creds_dict = json.loads(creds_json)
-        else:
-            with open("creds.json") as f:
-                creds_dict = json.load(f)
+        if not creds_json:
+            raise EnvironmentError(
+                "❌ GOOGLE_CREDS غير موجود في متغيرات البيئة.\n"
+                "يرجى تعيينه بمحتوى JSON حساب الخدمة."
+            )
+        creds_dict = json.loads(creds_json)
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         _client = gspread.authorize(creds)
         return _client
@@ -41,7 +43,7 @@ def get_sheet(name):
         ws = spreadsheet.add_worksheet(title=name, rows=1000, cols=20)
         return ws
 
-# ── الذاكرة المؤقتة وإدارة القذارة ──────────────────────────────────
+# ── الذاكرة المؤقتة والقذارة ────────────────────────────────────────
 _cache = {
     "users": {},
     "clans": {},
@@ -70,7 +72,6 @@ def init_cache():
     global _initialized
     if _initialized:
         return
-    # تحميل أولي (قد يكون من خيط واحد فقط)
     _load_all()
     with _lock:
         _initialized = True
@@ -194,7 +195,7 @@ def _flush_with_retry(flush_func, dirty_key):
         flush_func()
     except Exception as e:
         print(f"Sync error in {dirty_key}: {e}")
-        # إعادة إدراج جميع المفاتيح كقذرة حتى تتم مزامنتها لاحقاً
+        # إعادة إدراج المفاتيح كقذرة لتتم مزامنتها لاحقاً
         with _lock:
             if dirty_key == "users":
                 _dirty["users"].update(_cache["users"].keys())
