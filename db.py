@@ -1,4 +1,5 @@
 import os, json, threading, time
+from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -41,12 +42,14 @@ _cache = {
     "tasks": [],
     "shop": [],
     "ratings": {},
-    "channels": {}
+    "channels": {},
+    "tournaments": {}
 }
 _dirty = {
     "users": set(),
     "clans": set(),
     "ratings": set(),
+    "tournaments": set()
 }
 _initialized = False
 _lock = threading.Lock()
@@ -78,6 +81,7 @@ def _load_all():
     _load_tasks()
     _load_shop()
     _load_ratings()
+    _load_tournaments()
 
 def _load_users():
     ws = get_sheet("users")
@@ -187,12 +191,31 @@ def _load_ratings():
     for r in records:
         _cache["ratings"][str(r["user_id"])] = _safe_int(r.get("stars"))
 
+def _load_tournaments():
+    ws = get_sheet("tournaments")
+    if not ws.row_values(1):
+        ws.append_row(["tournament_id","status","players","rounds","winner_id","prize","created_at"])
+        return
+    records = ws.get_all_records()
+    for r in records:
+        tid = str(r["tournament_id"])
+        _cache["tournaments"][tid] = {
+            "tournament_id": tid,
+            "status": r.get("status", "open"),
+            "players": r.get("players", ""),
+            "rounds": r.get("rounds", "[]"),
+            "winner_id": r.get("winner_id", ""),
+            "prize": _safe_int(r.get("prize", 500)),
+            "created_at": r.get("created_at", str(datetime.now()))
+        }
+
 def _sync_loop():
     while True:
         time.sleep(30)
         _flush_with_retry(_flush_users, "users")
         _flush_with_retry(_flush_clans, "clans")
         _flush_with_retry(_flush_ratings, "ratings")
+        _flush_with_retry(_flush_tournaments, "tournaments")
 
 def _flush_with_retry(flush_func, dirty_key):
     try:
@@ -200,12 +223,8 @@ def _flush_with_retry(flush_func, dirty_key):
     except Exception as e:
         print(f"Sync error in {dirty_key}: {e}")
         with _lock:
-            if dirty_key == "users":
-                _dirty["users"].update(_cache["users"].keys())
-            elif dirty_key == "clans":
-                _dirty["clans"].update(_cache["clans"].keys())
-            elif dirty_key == "ratings":
-                _dirty["ratings"].update(_cache["ratings"].keys())
+            if dirty_key in _dirty:
+                _dirty[dirty_key].update(_cache[dirty_key].keys() if isinstance(_cache[dirty_key], dict) else [])
 
 def _flush_users():
     with _lock:
@@ -267,7 +286,27 @@ def _flush_ratings():
         else:
             ws.append_row([uid, str(stars), ""])
 
-# ── واجهة API المحدثة ────────────────────────────────────────
+def _flush_tournaments():
+    with _lock:
+        dirty = list(_dirty["tournaments"])
+        _dirty["tournaments"].clear()
+    if not dirty:
+        return
+    ws = get_sheet("tournaments")
+    headers = ws.row_values(1)
+    all_rows = ws.get_all_values()
+    id_to_row = {str(row[0]): i+2 for i, row in enumerate(all_rows[1:])}
+    for tid in dirty:
+        t = _cache["tournaments"].get(tid)
+        if not t:
+            continue
+        row_data = [str(t.get(h, "")) for h in headers]
+        if tid in id_to_row:
+            ws.update(f"A{id_to_row[tid]}", [row_data])
+        else:
+            ws.append_row(row_data)
+
+# ── واجهة API ───────────────────────────────────────────────
 def get_or_create_user(user_id, name, username):
     if not _initialized:
         init_cache()
@@ -368,7 +407,7 @@ def get_avg_rating():
         return 0, 0
     return round(sum(ratings) / len(ratings), 1), len(ratings)
 
-# ── دوال إدارة المستخدمين ─────────────────────
+# ── إدارة المستخدمين ────────────────────────────────────────
 def is_banned(user_id):
     u = get_user(user_id)
     return u.get("banned", False) if u else False
@@ -390,7 +429,7 @@ def get_referral_count(user_id):
     u = get_user(user_id)
     return _safe_int(u.get("referrals")) if u else 0
 
-# ── دوال القنوات ─────────────────────────────
+# ── القنوات ─────────────────────────────────────────────────
 def add_active_channel(channel_id, title):
     if not _initialized:
         init_cache()
@@ -404,3 +443,53 @@ def remove_active_channel(channel_id):
 def get_active_channels():
     with _lock:
         return list(_cache["channels"].values())
+
+# ── البطولات ────────────────────────────────────────────────
+def create_tournament(tournament_id, prize=500):
+    if not _initialized:
+        init_cache()
+    t = {
+        "tournament_id": tournament_id,
+        "status": "open",
+        "players": "",
+        "rounds": "[]",
+        "winner_id": "",
+        "prize": prize,
+        "created_at": str(datetime.now())
+    }
+    _cache["tournaments"][tournament_id] = t
+    with _lock:
+        _dirty["tournaments"].add(tournament_id)
+    return t
+
+def get_active_tournament():
+    if not _initialized:
+        init_cache()
+    for t in _cache["tournaments"].values():
+        if t["status"] in ("open", "running"):
+            return t
+    return None
+
+def get_tournament(tournament_id):
+    if not _initialized:
+        init_cache()
+    return _cache["tournaments"].get(tournament_id)
+
+def join_tournament(tournament_id, user_id):
+    t = _cache["tournaments"].get(tournament_id)
+    if not t or t["status"] != "open":
+        return False
+    players = t["players"].split(",") if t["players"] else []
+    if str(user_id) in players:
+        return False
+    players.append(str(user_id))
+    t["players"] = ",".join(players)
+    with _lock:
+        _dirty["tournaments"].add(tournament_id)
+    return True
+
+def update_tournament(tournament_id, **kwargs):
+    if tournament_id in _cache["tournaments"]:
+        _cache["tournaments"][tournament_id].update(kwargs)
+        with _lock:
+            _dirty["tournaments"].add(tournament_id)
