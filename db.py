@@ -67,9 +67,29 @@ def init_cache():
     t.start()
 
 def _load_all():
-    _load_users(); _load_clans(); _load_tasks(); _load_shop(); _load_ratings()
-    _load_tournaments(); _load_achievements(); _load_titles(); _load_themes()
-    _load_group_challenges(); _load_events(); _load_clan_wars()
+    _load_users()
+    time.sleep(1.5)
+    _load_clans()
+    time.sleep(1.5)
+    _load_tasks()
+    time.sleep(1.5)
+    _load_shop()
+    time.sleep(1.5)
+    _load_ratings()
+    time.sleep(1.5)
+    _load_tournaments()
+    time.sleep(1.5)
+    _load_achievements()
+    time.sleep(1.5)
+    _load_titles()
+    time.sleep(1.5)
+    _load_themes()
+    time.sleep(1.5)
+    _load_group_challenges()
+    time.sleep(1.5)
+    _load_events()
+    time.sleep(1.5)
+    _load_clan_wars()
 
 def _load_users():
     ws = get_sheet("users")
@@ -409,7 +429,6 @@ def is_banned(user_id):
 
 def ban_user(user_id): update_user(user_id, banned=True)
 def unban_user(user_id): update_user(user_id, banned=False)
-
 def has_been_referred(user_id):
     u = get_user(user_id)
     return u.get("referred", False) if u else False
