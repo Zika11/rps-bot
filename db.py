@@ -1,7 +1,4 @@
-import os
-import json
-import threading
-import time
+import os, json, threading, time
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -11,7 +8,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-# ── Google Sheets client (يُبنى مرة واحدة) ──────────────────────────
+# ── عميل Google Sheets (يُبنى مرة واحدة) ──────────────────────────
 _client = None
 _client_lock = threading.Lock()
 
@@ -22,13 +19,9 @@ def get_client():
     with _client_lock:
         if _client is not None:
             return _client
-        # --- تصحيح أمني: فرض استخدام متغير البيئة فقط ---
         creds_json = os.environ.get("GOOGLE_CREDS")
         if not creds_json:
-            raise EnvironmentError(
-                "❌ GOOGLE_CREDS غير موجود في متغيرات البيئة.\n"
-                "يرجى تعيينه بمحتوى JSON حساب الخدمة."
-            )
+            raise EnvironmentError("❌ GOOGLE_CREDS غير موجود في متغيرات البيئة.")
         creds_dict = json.loads(creds_json)
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         _client = gspread.authorize(creds)
@@ -43,7 +36,7 @@ def get_sheet(name):
         ws = spreadsheet.add_worksheet(title=name, rows=1000, cols=20)
         return ws
 
-# ── الذاكرة المؤقتة والقذارة ────────────────────────────────────────
+# ── الذاكرة المؤقتة والقذارة ──────────────────────────────────────
 _cache = {
     "users": {},
     "clans": {},
@@ -61,13 +54,12 @@ _initialized = False
 _lock = threading.Lock()
 
 def _safe_int(val, default=0):
-    """تحويل آمن إلى عدد صحيح"""
     try:
         return int(val)
     except (ValueError, TypeError):
         return default
 
-# ── تحميل البيانات مرة واحدة ────────────────────────────────────────
+# ── تحميل البيانات مرة واحدة ──────────────────────────────────────
 def init_cache():
     global _initialized
     if _initialized:
@@ -75,7 +67,6 @@ def init_cache():
     _load_all()
     with _lock:
         _initialized = True
-    # تشغيل خيط المزامنة الخلفي
     t = threading.Thread(target=_sync_loop, daemon=True)
     t.start()
 
@@ -88,8 +79,13 @@ def _load_all():
 
 def _load_users():
     ws = get_sheet("users")
+    # ✅ الأعمدة الجديدة أضفناها هنا
     if not ws.row_values(1):
-        ws.append_row(["user_id","name","username","points","clan","wins","losses","draws","rating","daily_tasks","shop_items"])
+        ws.append_row([
+            "user_id","name","username","points","clan",
+            "wins","losses","draws","rating","daily_tasks",
+            "shop_items","tasks_progress","referrals","banned"
+        ])
         return
     records = ws.get_all_records()
     for r in records:
@@ -106,6 +102,9 @@ def _load_users():
             "rating": _safe_int(r.get("rating")),
             "daily_tasks": r.get("daily_tasks", ""),
             "shop_items": r.get("shop_items", ""),
+            "tasks_progress": r.get("tasks_progress", ""),
+            "referrals": _safe_int(r.get("referrals")),
+            "banned": r.get("banned", "") == "TRUE" if isinstance(r.get("banned"), str) else bool(r.get("banned", False))
         }
 
 def _load_clans():
@@ -182,7 +181,7 @@ def _load_ratings():
     for r in records:
         _cache["ratings"][str(r["user_id"])] = _safe_int(r.get("stars"))
 
-# ── خيط المزامنة مع إعادة المحاولة عند الفشل ──────────────────────
+# ── خيط المزامنة ────────────────────────────────────────────────
 def _sync_loop():
     while True:
         time.sleep(30)
@@ -195,7 +194,6 @@ def _flush_with_retry(flush_func, dirty_key):
         flush_func()
     except Exception as e:
         print(f"Sync error in {dirty_key}: {e}")
-        # إعادة إدراج المفاتيح كقذرة لتتم مزامنتها لاحقاً
         with _lock:
             if dirty_key == "users":
                 _dirty["users"].update(_cache["users"].keys())
@@ -214,12 +212,14 @@ def _flush_users():
     headers = ws.row_values(1)
     all_rows = ws.get_all_values()
     id_to_row = {str(row[0]): i+2 for i, row in enumerate(all_rows[1:])}
-
     for uid in dirty:
         u = _cache["users"].get(uid)
         if not u:
             continue
-        row_data = [str(u.get(h, "")) for h in headers]
+        # تحويل boolean banned إلى نص "TRUE"/"FALSE" عشان الـ sheet
+        u_sheet = dict(u)
+        u_sheet["banned"] = "TRUE" if u_sheet.get("banned") else "FALSE"
+        row_data = [str(u_sheet.get(h, "")) for h in headers]
         if uid in id_to_row:
             ws.update(f"A{id_to_row[uid]}", [row_data])
         else:
@@ -235,7 +235,6 @@ def _flush_clans():
     headers = ws.row_values(1)
     all_rows = ws.get_all_values()
     name_to_row = {str(row[0]): i+2 for i, row in enumerate(all_rows[1:])}
-
     for clan_name in dirty:
         c = _cache["clans"].get(clan_name)
         if not c:
@@ -255,7 +254,6 @@ def _flush_ratings():
     ws = get_sheet("ratings")
     all_rows = ws.get_all_values()
     id_to_row = {str(row[0]): i+2 for i, row in enumerate(all_rows[1:])}
-
     for uid in dirty:
         stars = _cache["ratings"].get(uid, 0)
         if uid in id_to_row:
@@ -263,7 +261,7 @@ def _flush_ratings():
         else:
             ws.append_row([uid, str(stars), ""])
 
-# ── واجهة API العامة (آمنة خيطياً) ─────────────────────────────────
+# ── واجهة API ──────────────────────────────────────────────────
 def get_or_create_user(user_id, name, username):
     if not _initialized:
         init_cache()
@@ -272,7 +270,8 @@ def get_or_create_user(user_id, name, username):
         u = {
             "user_id": uid, "name": name, "username": username or "",
             "points": 0, "clan": "", "wins": 0, "losses": 0,
-            "draws": 0, "rating": 0, "daily_tasks": "", "shop_items": ""
+            "draws": 0, "rating": 0, "daily_tasks": "", "shop_items": "",
+            "tasks_progress": "", "referrals": 0, "banned": False
         }
         _cache["users"][uid] = u
         with _lock:
@@ -289,7 +288,7 @@ def update_user(user_id, **kwargs):
         init_cache()
     uid = str(user_id)
     if uid in _cache["users"]:
-        for k in ("points", "wins", "losses", "draws", "rating"):
+        for k in ("points", "wins", "losses", "draws", "rating", "referrals"):
             if k in kwargs:
                 kwargs[k] = _safe_int(kwargs[k])
         _cache["users"][uid].update(kwargs)
@@ -362,7 +361,7 @@ def get_avg_rating():
         return 0, 0
     return round(sum(ratings) / len(ratings), 1), len(ratings)
 
-# ── إدارة القنوات النشطة (محمية بالقفل) ──────────────────────────
+# ── القنوات النشطة ─────────────────────────────────────────────
 def add_active_channel(channel_id, title):
     if not _initialized:
         init_cache()
