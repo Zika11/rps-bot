@@ -200,6 +200,64 @@ async def claim_daily(user_id, context):
 
     return f"🎁 مكافأة اليوم {streak}! حصلت على {reward} نقطة. النهارده يومك رقم {streak} على التوالي!"
 
+# ── الإنجازات ───────────────────────────────────────────────
+async def check_achievements(user_id, context):
+    u = db.get_user(user_id)
+    if not u:
+        return
+    all_achs = db.get_achievements()
+    earned = (u.get("achievements", "") or "").split(",")
+    for ach in all_achs:
+        if ach["ach_id"] in earned:
+            continue
+        field = ach["condition_field"]
+        needed = ach["condition_value"]
+        current = 0
+        if field == "wins": current = int(u.get("wins", 0))
+        elif field == "losses": current = int(u.get("losses", 0))
+        elif field == "draws": current = int(u.get("draws", 0))
+        elif field == "points": current = int(u.get("points", 0))
+        elif field == "streak": current = int(u.get("streak_count", 0))
+        elif field == "referrals": current = int(u.get("referrals", 0))
+        elif field == "solo_games": current = int(u.get("solo_games", 0))
+        elif field == "random_games": current = int(u.get("random_games", 0))
+        elif field == "friend_games": current = int(u.get("friend_games", 0))
+        elif field == "channel_games": current = int(u.get("channel_games", 0))
+        elif field == "items_owned":
+            owned = (u.get("shop_items", "") or "").split(",")
+            current = len([o for o in owned if o])
+        elif field == "clan_created":
+            for clan in db.get_all_clans():
+                if str(clan["leader_id"]) == str(user_id):
+                    current = 1
+                    break
+        elif field == "clan_joined": current = 1 if u.get("clan") else 0
+        elif field == "tournament_win": current = int(u.get("tournament_wins", 0))
+        elif field == "rated": current = 1 if str(user_id) in db._cache["ratings"] else 0
+        elif field == "achievements_count": current = len(earned)
+        elif field == "rock_used": current = int(u.get("rock_used", 0))
+        elif field == "win_streak": current = int(u.get("win_streak", 0))
+        elif field == "bo3_wins": current = int(u.get("bo3_wins", 0))
+        elif field == "bo3_losses": current = int(u.get("bo3_losses", 0))
+        elif field == "login_streak": current = int(u.get("login_streak", 0))
+        elif field == "days_since_register": current = int(u.get("days_since_register", 0))
+        elif field == "channel_win": current = int(u.get("channel_games", 0))  # مؤقتًا حتى نضيف عداد منفصل
+        elif field == "random_win": current = int(u.get("random_games", 0))    # مؤقتًا
+        elif field == "night_play":
+            now = datetime.now().time()
+            if now.hour >= 0 and now.hour < 5:  # بعد منتصف الليل
+                current = 1
+        if current >= needed:
+            if db.add_achievement(user_id, ach["ach_id"]):
+                try:
+                    await context.bot.send_message(
+                        user_id,
+                        f"🎖️ إنجاز جديد: {ach['icon']} *{ach['name']}* - {ach['description']}",
+                        parse_mode="Markdown"
+                    )
+                except:
+                    pass
+
 # ── القنوات (محسنة) ────────────────────────────────────────
 async def channel_loop(chat_id, context):
     while True:
@@ -262,7 +320,134 @@ async def check_bot_permissions(chat_id, context):
         logging.error(f"check_bot_permissions: {e}")
         return False
 
-# ── أوامر البوت ─────────────────────────────────────────────
+# ── أوامر البطولة ───────────────────────────────────────────
+async def create_tournament(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_founder(update.effective_user.id):
+        await update.message.reply_text("❌ مش مسموحلك.")
+        return
+    tourney_id = f"t_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    prize = 500
+    if context.args and context.args[0].isdigit():
+        prize = int(context.args[0])
+    db.create_tournament(tourney_id, prize)
+    await update.message.reply_text(
+        f"🏆 تم إنشاء بطولة جديدة!\n"
+        f"ID: `{tourney_id}`\n"
+        f"الجائزة: {prize} نقطة\n"
+        f"العدد المطلوب: 8 لاعبين\n"
+        f"استخدم /join عشان تنضم!"
+    )
+
+async def join_tournament(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    t = db.get_active_tournament()
+    if not t:
+        await update.message.reply_text("❌ مفيش بطولة مفتوحة حالياً.")
+        return
+    if db.join_tournament(t["tournament_id"], user.id):
+        players = t["players"].split(",")
+        await update.message.reply_text(f"✅ انضميت للبطولة! ({len(players)}/8)")
+        if len(players) >= 8:
+            t["status"] = "running"
+            await start_tournament(t, context)
+    else:
+        await update.message.reply_text("❌ إما البطولة مقفولة أو انت مشترك بالفعل.")
+
+async def start_tournament(t, context):
+    players = t["players"].split(",")
+    random.shuffle(players)
+    rounds = []
+    round1 = []
+    for i in range(0, 8, 2):
+        match = {
+            "p1": players[i], "p2": players[i+1],
+            "winner": None,
+            "status": "pending"
+        }
+        round1.append(match)
+        try:
+            await context.bot.send_message(
+                int(players[i]),
+                f"🏆 مباراتك في البطولة ضد {db.get_user(int(players[i+1]))['name']}!\n"
+                f"اختار حركتك في التحدي الخاص."
+            )
+            await context.bot.send_message(
+                int(players[i+1]),
+                f"🏆 مباراتك في البطولة ضد {db.get_user(int(players[i]))['name']}!\n"
+                f"اختار حركتك في التحدي الخاص."
+            )
+            game_id = f"t_{players[i]}_{players[i+1]}"
+            active_games[game_id] = {
+                "p1": int(players[i]), "p1_name": db.get_user(int(players[i]))["name"],
+                "p2": int(players[i+1]), "p2_name": db.get_user(int(players[i+1]))["name"],
+                "c1": None, "c2": None,
+                "created_at": datetime.now(),
+                "best_of": 1,
+                "p1_wins": 0, "p2_wins": 0,
+                "tournament_match": True,
+                "tournament_id": t["tournament_id"],
+                "match_index": i//2
+            }
+            kb = mp_keyboard(game_id)
+            await context.bot.send_message(int(players[i]), "اختار حركتك:", reply_markup=kb)
+            await context.bot.send_message(int(players[i+1]), "اختار حركتك:", reply_markup=kb)
+        except Exception as e:
+            logging.error(f"خطأ في بدء مباراة البطولة: {e}")
+
+    rounds.append(round1)
+    t["rounds"] = json.dumps(rounds)
+    db.update_tournament(t["tournament_id"], rounds=t["rounds"], status="running")
+
+async def handle_tournament_match_result(game, winner_id, context):
+    t = db.get_tournament(game["tournament_id"])
+    if not t or t["status"] != "running":
+        return
+    rounds = json.loads(t["rounds"])
+    current_round = rounds[-1]
+    match = current_round[game["match_index"]]
+    match["winner"] = str(winner_id)
+    match["status"] = "finished"
+
+    if all(m["status"] == "finished" for m in current_round):
+        winners = [m["winner"] for m in current_round]
+        if len(winners) == 1:
+            t["winner_id"] = winners[0]
+            t["status"] = "finished"
+            prize = t["prize"]
+            db.update_user(int(winners[0]), points=int(db.get_user(int(winners[0])).get("points",0)) + prize,
+                           tournament_wins=int(db.get_user(int(winners[0])).get("tournament_wins",0)) + 1)
+            try:
+                await context.bot.send_message(int(winners[0]), f"🎉 مبروك! أنت بطل البطولة وكسبت {prize} نقطة!")
+                await check_achievements(int(winners[0]), context)
+            except:
+                pass
+        else:
+            next_round = []
+            for i in range(0, len(winners), 2):
+                next_round.append({
+                    "p1": winners[i], "p2": winners[i+1],
+                    "winner": None, "status": "pending"
+                })
+                game_id = f"t_{winners[i]}_{winners[i+1]}"
+                active_games[game_id] = {
+                    "p1": int(winners[i]), "p1_name": db.get_user(int(winners[i]))["name"],
+                    "p2": int(winners[i+1]), "p2_name": db.get_user(int(winners[i+1]))["name"],
+                    "c1": None, "c2": None,
+                    "created_at": datetime.now(),
+                    "best_of": 1,
+                    "p1_wins": 0, "p2_wins": 0,
+                    "tournament_match": True,
+                    "tournament_id": t["tournament_id"],
+                    "match_index": i//2
+                }
+                kb = mp_keyboard(game_id)
+                await context.bot.send_message(int(winners[i]), "اختار حركتك للجولة القادمة:", reply_markup=kb)
+                await context.bot.send_message(int(winners[i+1]), "اختار حركتك للجولة القادمة:", reply_markup=kb)
+            rounds.append(next_round)
+            t["rounds"] = json.dumps(rounds)
+    db.update_tournament(t["tournament_id"], rounds=t["rounds"], status=t["status"], winner_id=t["winner_id"])
+
+# ── أوامر البوت الرئيسية ────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     ref_bonus = False
@@ -340,6 +525,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🚫 أنت محظور من استخدام البوت.")
         return
 
+    # تحديث أيام التسجيل والدخول
+    days_since = (datetime.now() - datetime.strptime(u.get("created_at", str(datetime.now())), "%Y-%m-%d %H:%M:%S.%f")).days if u.get("created_at") else 0
+    db.update_user(user.id, days_since_register=days_since, login_streak=u.get("streak_count", 0))
+    await check_achievements(user.id, context)
+
     points = int(u.get("points", 0))
     leaderboard = db.get_leaderboard(100)
     rank = next((i+1 for i, p in enumerate(leaderboard) if p["user_id"] == str(user.id)), "غير مصنف")
@@ -353,6 +543,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ref_bonus:
         text += "\n\n🎁 تم منح صاحبك 1000 نقطة على دعوتك!"
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_menu_keyboard(user.id))
+
+async def achievements_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    u = db.get_user(user.id)
+    if not u:
+        return
+    all_achs = db.get_achievements()
+    earned = (u.get("achievements", "") or "").split(",")
+    text = "🎖️ *قائمة الإنجازات:*\n\n"
+    for ach in all_achs:
+        status = "✅" if ach["ach_id"] in earned else "🔒"
+        text += f"{status} {ach['icon']} *{ach['name']}* - {ach['description']}\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def activate_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -400,85 +603,6 @@ async def stop_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("ℹ️ الجروب مش مفعّل أصلاً.")
 
-# ── أوامر البطولة ───────────────────────────────────────────
-async def create_tournament(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_founder(update.effective_user.id):
-        await update.message.reply_text("❌ مش مسموحلك.")
-        return
-    tourney_id = f"t_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    prize = 500
-    if context.args and context.args[0].isdigit():
-        prize = int(context.args[0])
-    db.create_tournament(tourney_id, prize)
-    await update.message.reply_text(
-        f"🏆 تم إنشاء بطولة جديدة!\n"
-        f"ID: `{tourney_id}`\n"
-        f"الجائزة: {prize} نقطة\n"
-        f"العدد المطلوب: 8 لاعبين\n"
-        f"استخدم /join عشان تنضم!"
-    )
-
-async def join_tournament(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    t = db.get_active_tournament()
-    if not t:
-        await update.message.reply_text("❌ مفيش بطولة مفتوحة حالياً.")
-        return
-    if db.join_tournament(t["tournament_id"], user.id):
-        players = t["players"].split(",")
-        await update.message.reply_text(f"✅ انضميت للبطولة! ({len(players)}/8)")
-        if len(players) >= 8:
-            t["status"] = "running"
-            await start_tournament(t, context)
-    else:
-        await update.message.reply_text("❌ إما البطولة مقفولة أو انت مشترك بالفعل.")
-
-async def start_tournament(t, context):
-    players = t["players"].split(",")
-    random.shuffle(players)
-    rounds = []
-    round1 = []
-    for i in range(0, 8, 2):
-        match = {
-            "p1": players[i], "p2": players[i+1],
-            "winner": None,
-            "status": "pending"
-        }
-        round1.append(match)
-        try:
-            await context.bot.send_message(
-                int(players[i]),
-                f"🏆 مباراتك في البطولة ضد {db.get_user(int(players[i+1]))['name']}!\n"
-                f"اختار حركتك في التحدي الخاص."
-            )
-            await context.bot.send_message(
-                int(players[i+1]),
-                f"🏆 مباراتك في البطولة ضد {db.get_user(int(players[i]))['name']}!\n"
-                f"اختار حركتك في التحدي الخاص."
-            )
-            # إرسال أزرار مباشرة لهم
-            game_id = f"t_{players[i]}_{players[i+1]}"
-            active_games[game_id] = {
-                "p1": int(players[i]), "p1_name": db.get_user(int(players[i]))["name"],
-                "p2": int(players[i+1]), "p2_name": db.get_user(int(players[i+1]))["name"],
-                "c1": None, "c2": None,
-                "created_at": datetime.now(),
-                "best_of": 1,
-                "p1_wins": 0, "p2_wins": 0,
-                "tournament_match": True,
-                "tournament_id": t["tournament_id"],
-                "match_index": i//2
-            }
-            kb = mp_keyboard(game_id)
-            await context.bot.send_message(int(players[i]), "اختار حركتك:", reply_markup=kb)
-            await context.bot.send_message(int(players[i+1]), "اختار حركتك:", reply_markup=kb)
-        except Exception as e:
-            logging.error(f"خطأ في بدء مباراة البطولة: {e}")
-
-    rounds.append(round1)
-    t["rounds"] = json.dumps(rounds)
-    db.update_tournament(t["tournament_id"], rounds=t["rounds"], status="running")
-
 # ── معالج الأزرار الرئيسي ────────────────────────────────────
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -506,6 +630,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await claim_daily(user.id, context)
         await query.answer(msg, show_alert=True)
         await query.edit_message_text(msg, reply_markup=main_menu_keyboard(user.id))
+        await check_achievements(user.id, context)
 
     elif data == "menu_play":
         await query.edit_message_text("🎮 اختار نوع اللعب:", reply_markup=play_menu_keyboard())
@@ -522,21 +647,34 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         wins = int(u.get("wins", 0) or 0)
         losses = int(u.get("losses", 0) or 0)
         draws = int(u.get("draws", 0) or 0)
+        solo_games = int(u.get("solo_games", 0)) + 1
+        rock_used = int(u.get("rock_used", 0)) + (1 if choice == "rock" else 0)
+        paper_used = int(u.get("paper_used", 0)) + (1 if choice == "paper" else 0)
+        scissors_used = int(u.get("scissors_used", 0)) + (1 if choice == "scissors" else 0)
+
         if result == "win":
             emoji, txt, pts_add = "🎉", "كسبت!", 10
             wins += 1
             add_clan_points(user.id, 3)
             await check_and_complete_task(user.id, "task_1", context)
             await check_and_complete_task(user.id, "task_2", context, 1)
+            win_streak = int(u.get("win_streak", 0)) + 1
         elif result == "loss":
             emoji, txt, pts_add = "😢", "خسرت!", -3
             losses += 1
+            win_streak = 0
         else:
             emoji, txt, pts_add = "🤝", "تعادل!", 5
             draws += 1
             add_clan_points(user.id, 1)
+            win_streak = int(u.get("win_streak", 0))
         pts = max(0, pts + pts_add)
-        db.update_user(user.id, points=pts, wins=wins, losses=losses, draws=draws)
+        db.update_user(user.id, points=pts, wins=wins, losses=losses, draws=draws,
+                       solo_games=solo_games, rock_used=rock_used,
+                       paper_used=paper_used, scissors_used=scissors_used,
+                       win_streak=win_streak)
+        await check_achievements(user.id, context)
+
         await query.edit_message_text(
             f"انت: {CHOICES[choice]}\nالبوت: {CHOICES[bot_choice]}\n\n{emoji} *{txt}*  ({'+' if pts_add>=0 else ''}{pts_add} نقطة)\n💰 نقاطك: {pts}",
             parse_mode="Markdown",
@@ -585,7 +723,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(game["p1"], "اختار حركتك 👇", reply_markup=kb)
         await context.bot.send_message(user.id, "اختار حركتك 👇", reply_markup=kb)
 
-    # ── متعددة (BO1 & BO3) ──
+    # ── متعددة (BO1 & BO3) ─ـ
     elif data.startswith("mp_"):
         parts = data.split("_")
         choice = parts[-1]
@@ -641,7 +779,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 add_clan_points(winner_id, 5)
                 await check_and_complete_task(winner_id, "task_3", context)
 
-                # إذا كانت المباراة ضمن بطولة
+                # تحديث الإحصائيات الخاصة بالوضع
+                if game.get("game_type") == "friend":
+                    db.update_user(game["p1"], friend_games=int(u1.get("friend_games",0))+1)
+                    db.update_user(game["p2"], friend_games=int(u2.get("friend_games",0))+1)
+                elif game.get("game_type") == "random":
+                    db.update_user(game["p1"], random_games=int(u1.get("random_games",0))+1)
+                    db.update_user(game["p2"], random_games=int(u2.get("random_games",0))+1)
+
+                if game.get("best_of") == 3:
+                    db.update_user(winner_id, bo3_wins=int(db.get_user(winner_id).get("bo3_wins",0))+1)
+                    db.update_user(loser_id, bo3_losses=int(db.get_user(loser_id).get("bo3_losses",0))+1)
+
+                await check_achievements(winner_id, context)
+                await check_achievements(loser_id, context)
+
                 if game.get("tournament_match"):
                     await handle_tournament_match_result(game, winner_id, context)
 
@@ -669,7 +821,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "p1": opponent["id"], "p1_name": opponent["name"],
                 "p2": user.id, "p2_name": user.first_name,
                 "c1": None, "c2": None,
-                "created_at": datetime.now()
+                "created_at": datetime.now(),
+                "best_of": 1,
+                "p1_wins": 0, "p2_wins": 0,
+                "game_type": "random"
             }
             asyncio.create_task(game_timeout(game_id, context))
             kb = mp_keyboard(game_id)
@@ -743,6 +898,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 add_clan_points(game["player2"], 2)
                 result_text = "تعادل!"
 
+            # تحديث channel_games counter
+            db.update_user(game["player1"], channel_games=int(p1.get("channel_games",0))+1)
+            db.update_user(game["player2"], channel_games=int(p2.get("channel_games",0))+1)
+            await check_achievements(game["player1"], context)
+            await check_achievements(game["player2"], context)
+
             final_text = (
                 f"⚔️ *النتيجة*\n\n"
                 f"{p1['name']}: {c1_name}\n"
@@ -781,8 +942,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.answer("❌ إما البطولة مقفولة أو انت مشترك بالفعل.", show_alert=True)
 
-    # ── باقي الأزرار (التصنيف، الملف، المهام، المتجر، العشائر، إلخ) ──
-    # ... (نفس الكود السابق بدون تغيير) ...
+    # ── باقي الأزرار (التصنيف، الملف، المهام، المتجر، العشائر، إلخ) ─ـ
+    # ... (نفس الكود السابق) ...
     elif data == "play_channel":
         channels = db.get_active_channels()
         bot_username = context.bot.username
@@ -842,6 +1003,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🎯 إجمالي: {total}\n\n"
             f"🔗 رابط دعوتك:\n`{ref_link}`"
         )
+        # الإنجازات
+        achievements_str = u.get("achievements", "")
+        earned_ach_ids = achievements_str.split(",") if achievements_str else []
+        all_achs = db.get_achievements()
+        earned_achs = [a for a in all_achs if a["ach_id"] in earned_ach_ids]
+        ach_text = "\n🎖️ *الإنجازات:*\n"
+        if earned_achs:
+            for a in earned_achs[:12]:
+                ach_text += f"{a['icon']} {a['name']}\n"
+        else:
+            ach_text += "لا توجد بعد.\n"
+        text += ach_text
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_btn())
 
     elif data == "menu_referral":
@@ -935,6 +1108,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_owned = ",".join(owned)
         db.update_user(user.id, points=pts-price, shop_items=new_owned)
         await query.answer(f"✅ اشتريت {item['name']}!", show_alert=False)
+        await check_achievements(user.id, context)
     elif data.startswith("use_"):
         item_id = data.replace("use_", "")
         u = db.get_user(user.id)
@@ -1082,6 +1256,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💰 *النقاط:*\n• فوز = 10-15 نقطة\n• تعادل = 5 نقاط\n• خسارة = -3 نقطة\n• دعوة صديق = 1000 نقطة\n\n"
             "🎁 المكافأة اليومية — اكسب نقاط متزايدة كل يوم\n"
             "🏆 البطولات — تنافس مع 8 لاعبين واربح الجائزة الكبرى\n"
+            "🎖️ الإنجازات — افتح شارات جديدة\n"
             "🗡️ العشائر — انضم وتنافس\n🎁 المهام — نقاط إضافية\n🛒 المتجر — اشتري بطاقات"
         )
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_btn())
@@ -1096,6 +1271,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stars = int(data.replace("rate_", ""))
         db.add_rating(user.id, stars)
         await query.edit_message_text(f"✅ شكراً! ديت {stars} نجمة ⭐", reply_markup=back_btn())
+        await check_achievements(user.id, context)
 
     elif data == "menu_support":
         await query.edit_message_text("💎 *دعم البوت*\n\n⭐ قيّم البوت\n📢 شارك مع أصحابك\n💬 ابعت اقتراحاتك", parse_mode="Markdown", reply_markup=back_btn())
@@ -1164,58 +1340,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_founder(user.id): return
         await query.edit_message_text("🔧 إدارة المتجر والمهام قريباً!", reply_markup=back_btn("founder_panel"))
 
-# ── دالة مساعدة لنتائج مباريات البطولة ──────────────────────
-async def handle_tournament_match_result(game, winner_id, context):
-    t = db.get_tournament(game["tournament_id"])
-    if not t or t["status"] != "running":
-        return
-    rounds = json.loads(t["rounds"])
-    # تحديد الجولة الحالية (آخر جولة)
-    current_round = rounds[-1]
-    match = current_round[game["match_index"]]
-    match["winner"] = str(winner_id)
-    match["status"] = "finished"
-
-    # التحقق إذا كل مباريات الجولة خلصت
-    if all(m["status"] == "finished" for m in current_round):
-        winners = [m["winner"] for m in current_round]
-        if len(winners) == 1:
-            # البطل
-            t["winner_id"] = winners[0]
-            t["status"] = "finished"
-            prize = t["prize"]
-            db.update_user(int(winners[0]), points=int(db.get_user(int(winners[0])).get("points",0)) + prize)
-            try:
-                await context.bot.send_message(int(winners[0]), f"🎉 مبروك! أنت بطل البطولة وكسبت {prize} نقطة!")
-            except:
-                pass
-        else:
-            # الجولة القادمة
-            next_round = []
-            for i in range(0, len(winners), 2):
-                next_round.append({
-                    "p1": winners[i], "p2": winners[i+1],
-                    "winner": None, "status": "pending"
-                })
-                game_id = f"t_{winners[i]}_{winners[i+1]}"
-                active_games[game_id] = {
-                    "p1": int(winners[i]), "p1_name": db.get_user(int(winners[i]))["name"],
-                    "p2": int(winners[i+1]), "p2_name": db.get_user(int(winners[i+1]))["name"],
-                    "c1": None, "c2": None,
-                    "created_at": datetime.now(),
-                    "best_of": 1,
-                    "p1_wins": 0, "p2_wins": 0,
-                    "tournament_match": True,
-                    "tournament_id": t["tournament_id"],
-                    "match_index": i//2
-                }
-                kb = mp_keyboard(game_id)
-                await context.bot.send_message(int(winners[i]), "اختار حركتك للجولة القادمة:", reply_markup=kb)
-                await context.bot.send_message(int(winners[i+1]), "اختار حركتك للجولة القادمة:", reply_markup=kb)
-            rounds.append(next_round)
-            t["rounds"] = json.dumps(rounds)
-    db.update_tournament(t["tournament_id"], rounds=t["rounds"], status=t["status"], winner_id=t["winner_id"])
-
 # ── معالج النصوص ─────────────────────────────────────────────
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -1256,7 +1380,8 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "p2": None, "p2_name": None, "c1": None, "c2": None,
             "created_at": datetime.now(),
             "best_of": best_of,
-            "p1_wins": 0, "p2_wins": 0
+            "p1_wins": 0, "p2_wins": 0,
+            "game_type": "friend"
         }
         asyncio.create_task(game_timeout(game_id, context))
         accept_btn = InlineKeyboardMarkup([[
@@ -1287,6 +1412,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.update_user(user.id, clan=text)
         context.user_data["awaiting"] = None
         await update.message.reply_text(f"✅ تم إنشاء عشيرة *{text}*! 🗡️", parse_mode="Markdown", reply_markup=main_menu_keyboard(user.id))
+        await check_achievements(user.id, context)
 
     elif awaiting and awaiting.startswith("clan_desc:"):
         clan_name = awaiting.split(":")[1]
@@ -1376,6 +1502,7 @@ def main():
     app.add_handler(CommandHandler("stopchannel", stop_channel))
     app.add_handler(CommandHandler("tournament", create_tournament))
     app.add_handler(CommandHandler("join", join_tournament))
+    app.add_handler(CommandHandler("achievements", achievements_command))
     app.add_handler(CallbackQueryHandler(button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     logging.info("✅ البوت شغال...")
