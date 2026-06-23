@@ -27,14 +27,35 @@ def get_client():
         _client = gspread.authorize(creds)
         return _client
 
-def get_sheet(name):
+def get_sheet(name, retries=5):
+    """جلب ورقة العمل مع إعادة المحاولة عند خطأ 429"""
     client = get_client()
-    spreadsheet = client.open_by_key(SHEET_ID)
-    try:
-        return spreadsheet.worksheet(name)
-    except gspread.WorksheetNotFound:
-        ws = spreadsheet.add_worksheet(title=name, rows=1000, cols=20)
-        return ws
+    spreadsheet = None
+    for attempt in range(retries):
+        try:
+            spreadsheet = client.open_by_key(SHEET_ID)
+            break
+        except Exception as e:
+            if "429" in str(e) and attempt < retries - 1:
+                wait = (attempt + 1) * 2
+                print(f"Quota exceeded, retrying in {wait}s...")
+                time.sleep(wait)
+            else:
+                raise e
+
+    for attempt in range(retries):
+        try:
+            return spreadsheet.worksheet(name)
+        except gspread.WorksheetNotFound:
+            ws = spreadsheet.add_worksheet(title=name, rows=1000, cols=20)
+            return ws
+        except Exception as e:
+            if "429" in str(e) and attempt < retries - 1:
+                wait = (attempt + 1) * 2
+                print(f"Quota exceeded on worksheet {name}, retrying in {wait}s...")
+                time.sleep(wait)
+            else:
+                raise e
 
 _cache = {
     "users": {}, "clans": {}, "tasks": [], "shop": [], "ratings": {},
