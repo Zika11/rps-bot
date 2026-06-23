@@ -230,12 +230,18 @@ async def stop_channel_job(channel_id, context):
     db.remove_active_channel(channel_id)
 
 async def check_bot_permissions(chat_id, context):
+    """التحقق من صلاحيات البوت بدون إرسال أي رسالة"""
     try:
-        await context.bot.send_message(chat_id, "🔍 جاري فحص الصلاحيات...", disable_notification=True)
+        bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+        # إذا كان مشرفًا، تأكد من صلاحية الإرسال
+        if bot_member.status == 'administrator':
+            return bot_member.can_send_messages if hasattr(bot_member, 'can_send_messages') else True
+        # إذا كان عضوًا عاديًا، يمكنه الإرسال إذا لم يُقيّد (لا يمكن معرفة ذلك بدقة)
         return True
     except tg_error.Forbidden:
         return False
-    except Exception:
+    except Exception as e:
+        print(f"خطأ في فحص الصلاحيات: {e}")
         return False
 
 # ── أوامر البوت ─────────────────────────────────────────────
@@ -334,32 +340,41 @@ async def activate_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     channel_id = chat.id
-    has_perm = await check_bot_permissions(channel_id, context)
-    if not has_perm:
-        await update.message.reply_text(
-            "❌ البوت مش قادر يبعت رسايل في الجروب ده.\n"
-            "• تأكد إن البوت **Admin** في الجروب.\n"
-            "• تأكد إن صلاحية **إرسال الرسائل** متفعّلة."
+    try:
+        # فحص الصلاحيات بدون إرسال رسالة
+        has_perm = await check_bot_permissions(channel_id, context)
+        if not has_perm:
+            await update.message.reply_text(
+                "❌ البوت مش قادر يبعت رسايل في الجروب ده.\n"
+                "• تأكد إن البوت **Admin** في الجروب.\n"
+                "• تأكد إن صلاحية **إرسال الرسائل** متفعّلة."
+            )
+            return
+
+        # إيقاف أي مهمة قديمة
+        await stop_channel_job(channel_id, context)
+
+        # تسجيل الجروب
+        db.add_active_channel(channel_id, chat.title or "جروب")
+        channel_last_play[channel_id] = datetime.now()
+
+        # بدء المهمة المتكررة
+        job = context.job_queue.run_repeating(
+            channel_round,
+            interval=120,
+            first=5,
+            name=str(channel_id),
+            chat_id=channel_id,
         )
-        return
+        channel_jobs[channel_id] = job.name
 
-    await stop_channel_job(channel_id, context)
-    db.add_active_channel(channel_id, chat.title or "جروب")
-    channel_last_play[channel_id] = datetime.now()
-
-    job = context.job_queue.run_repeating(
-        channel_round,
-        interval=120,
-        first=5,
-        name=str(channel_id),
-        chat_id=channel_id,
-    )
-    channel_jobs[channel_id] = job.name
-
-    await update.message.reply_text(
-        "✅ تم تفعيل اللعب التلقائي!\n"
-        "كل دقيقتين هتظهر لعبة جديدة بين عضوين 🎮"
-    )
+        await update.message.reply_text(
+            "✅ تم تفعيل اللعب التلقائي!\n"
+            "كل دقيقتين هتظهر لعبة جديدة بين عضوين 🎮"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ حصل خطأ أثناء التفعيل: {e}")
+        print(f"خطأ في تفعيل القناة {channel_id}: {e}")
 
 async def stop_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -635,7 +650,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_btn("menu_play"))
 
-    # باقي الأزرار (كما هي)...
+    # باقي الأزرار (التصنيف، الملف الشخصي، الإحالة، المهام، المتجر، العشائر، التقييم، الدعم، القنوات، لوحة المؤسس)
     elif data == "menu_rank":
         await query.edit_message_text("🏆 اختار نوع التصنيف:",
                                       reply_markup=InlineKeyboardMarkup([
