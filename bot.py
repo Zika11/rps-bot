@@ -20,8 +20,9 @@ WIN_MAP = {"rock": "scissors", "scissors": "paper", "paper": "rock"}
 pending_matches = []
 active_games = {}
 
-channel_jobs = {}
-channel_games = {}
+# ── القنوات: استخدام asyncio.create_task ───────────────────────
+channel_tasks = {}         # asyncio.Task لكل قناة
+channel_games = {}         # اللعبة الحالية
 channel_last_play = {}
 
 def get_result(p1, p2):
@@ -169,44 +170,44 @@ def add_clan_points(user_id, amount):
     current_pts = int(clan.get("points", 0) or 0)
     db.update_clan(clan_name, points=current_pts + amount)
 
-# ── القنوات: JobQueue ───────────────────────────────────────
-async def channel_round(context: ContextTypes.DEFAULT_TYPE):
-    channel_id = int(context.job.chat_id)
-    if channel_id not in channel_jobs:
-        return
-    game = channel_games.get(channel_id)
-    if game and datetime.now() - game["created"] > timedelta(seconds=90):
-        await cancel_channel_game(channel_id, context)
-    if channel_id in channel_games:
-        return
+# ── القنوات: دوال جديدة ─────────────────────────────────────
+async def channel_loop(chat_id, context):
+    """لوب لا نهائي لكل قناة، يُلغى من الخارج"""
     try:
-        msg = await context.bot.send_message(
-            channel_id,
-            "🎮 *جولة جديدة بين عضوين!* أول واحد يضغط هيبقى اللاعب الأول 👇",
-            parse_mode="Markdown",
-            reply_markup=channel_keyboard(channel_id)
-        )
-        channel_games[channel_id] = {
-            "player1": None,
-            "choice1": None,
-            "player2": None,
-            "choice2": None,
-            "message_id": msg.message_id,
-            "created": datetime.now()
-        }
-        channel_last_play[channel_id] = datetime.now()
-    except (tg_error.Forbidden, tg_error.BadRequest, tg_error.ChatNotFound):
-        await stop_channel_job(channel_id, context)
-        try:
-            await context.bot.send_message(
-                channel_id,
-                "⚠️ تم إيقاف اللعب التلقائي بسبب عدم وجود صلاحيات كافية.\n"
-                "تأكد من أن البوت Admin ولديه صلاحية إرسال الرسائل، ثم أعد تفعيله بـ /activate."
-            )
-        except:
-            pass
-    except Exception as e:
-        print(f"خطأ مؤقت في القناة {channel_id}: {e}")
+        while True:
+            await asyncio.sleep(120)
+            if chat_id not in channel_tasks:
+                break
+            game = channel_games.get(chat_id)
+            if game and datetime.now() - game["created"] > timedelta(seconds=90):
+                await cancel_channel_game(chat_id, context)
+            if chat_id in channel_games:
+                continue
+            try:
+                msg = await context.bot.send_message(
+                    chat_id,
+                    "🎮 *جولة جديدة بين عضوين!* أول واحد يضغط هيبقى اللاعب الأول 👇",
+                    parse_mode="Markdown",
+                    reply_markup=channel_keyboard(chat_id)
+                )
+                channel_games[chat_id] = {
+                    "player1": None, "choice1": None,
+                    "player2": None, "choice2": None,
+                    "message_id": msg.message_id,
+                    "created": datetime.now()
+                }
+                channel_last_play[chat_id] = datetime.now()
+            except (tg_error.Forbidden, tg_error.BadRequest, tg_error.ChatNotFound):
+                await stop_channel_internal(chat_id, context)
+                break
+            except Exception as e:
+                print(f"خطأ في channel_loop للقناة {chat_id}: {e}")
+    except asyncio.CancelledError:
+        pass
+    finally:
+        channel_tasks.pop(chat_id, None)
+        channel_games.pop(chat_id, None)
+        db.remove_active_channel(chat_id)
 
 async def cancel_channel_game(channel_id, context, reason=""):
     game = channel_games.pop(channel_id, None)
@@ -220,23 +221,18 @@ async def cancel_channel_game(channel_id, context, reason=""):
         except:
             pass
 
-async def stop_channel_job(channel_id, context):
-    job_name = channel_jobs.pop(channel_id, None)
-    if job_name:
-        for job in context.job_queue.jobs():
-            if job.name == job_name:
-                job.schedule_removal()
-    channel_games.pop(channel_id, None)
-    db.remove_active_channel(channel_id)
+async def stop_channel_internal(chat_id, context):
+    task = channel_tasks.pop(chat_id, None)
+    if task:
+        task.cancel()
+    channel_games.pop(chat_id, None)
+    db.remove_active_channel(chat_id)
 
 async def check_bot_permissions(chat_id, context):
-    """التحقق من صلاحيات البوت بدون إرسال أي رسالة"""
     try:
         bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
-        # إذا كان مشرفًا، تأكد من صلاحية الإرسال
         if bot_member.status == 'administrator':
             return bot_member.can_send_messages if hasattr(bot_member, 'can_send_messages') else True
-        # إذا كان عضوًا عاديًا، يمكنه الإرسال إذا لم يُقيّد (لا يمكن معرفة ذلك بدقة)
         return True
     except tg_error.Forbidden:
         return False
@@ -341,7 +337,6 @@ async def activate_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     channel_id = chat.id
     try:
-        # فحص الصلاحيات بدون إرسال رسالة
         has_perm = await check_bot_permissions(channel_id, context)
         if not has_perm:
             await update.message.reply_text(
@@ -351,22 +346,13 @@ async def activate_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # إيقاف أي مهمة قديمة
-        await stop_channel_job(channel_id, context)
+        await stop_channel_internal(channel_id, context)
 
-        # تسجيل الجروب
         db.add_active_channel(channel_id, chat.title or "جروب")
         channel_last_play[channel_id] = datetime.now()
 
-        # بدء المهمة المتكررة
-        job = context.job_queue.run_repeating(
-            channel_round,
-            interval=120,
-            first=5,
-            name=str(channel_id),
-            chat_id=channel_id,
-        )
-        channel_jobs[channel_id] = job.name
+        task = asyncio.create_task(channel_loop(channel_id, context))
+        channel_tasks[channel_id] = task
 
         await update.message.reply_text(
             "✅ تم تفعيل اللعب التلقائي!\n"
@@ -382,8 +368,8 @@ async def stop_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ الأمر ده للجروبات بس!")
         return
     channel_id = chat.id
-    if channel_id in channel_jobs:
-        await stop_channel_job(channel_id, context)
+    if channel_id in channel_tasks:
+        await stop_channel_internal(channel_id, context)
         await update.message.reply_text("✅ تم إيقاف اللعب التلقائي.")
     else:
         await update.message.reply_text("ℹ️ الجروب مش مفعّل أصلاً.")
@@ -651,6 +637,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_btn("menu_play"))
 
     # باقي الأزرار (التصنيف، الملف الشخصي، الإحالة، المهام، المتجر، العشائر، التقييم، الدعم، القنوات، لوحة المؤسس)
+    # ... (نفس الأجزاء السابقة تماماً) ...
     elif data == "menu_rank":
         await query.edit_message_text("🏆 اختار نوع التصنيف:",
                                       reply_markup=InlineKeyboardMarkup([
@@ -973,7 +960,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
             f"📊 *إحصائيات البوت*\n\n👥 اللاعبين: {users_count}\n"
             f"🗡️ العشائر: {clans_count}\n⭐ متوسط التقييم: {avg}/50 ({count} تقييم)\n"
-            f"📺 جروبات نشطة: {len(channel_jobs)}"
+            f"📺 جروبات نشطة: {len(channel_tasks)}"
         )
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_btn("founder_panel"))
 
