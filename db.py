@@ -8,7 +8,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-# ── عميل Google Sheets (يُبنى مرة واحدة) ──────────────────────────
 _client = None
 _client_lock = threading.Lock()
 
@@ -36,7 +35,6 @@ def get_sheet(name):
         ws = spreadsheet.add_worksheet(title=name, rows=1000, cols=20)
         return ws
 
-# ── الذاكرة المؤقتة والقذارة ──────────────────────────────────────
 _cache = {
     "users": {},
     "clans": {},
@@ -59,7 +57,11 @@ def _safe_int(val, default=0):
     except (ValueError, TypeError):
         return default
 
-# ── تحميل البيانات مرة واحدة ──────────────────────────────────────
+def _safe_bool(val, default=False):
+    if isinstance(val, bool): return val
+    if isinstance(val, str): return val.upper() == "TRUE"
+    return default
+
 def init_cache():
     global _initialized
     if _initialized:
@@ -79,12 +81,11 @@ def _load_all():
 
 def _load_users():
     ws = get_sheet("users")
-    # ✅ الأعمدة الجديدة أضفناها هنا
     if not ws.row_values(1):
         ws.append_row([
             "user_id","name","username","points","clan",
             "wins","losses","draws","rating","daily_tasks",
-            "shop_items","tasks_progress","referrals","banned"
+            "shop_items","tasks_progress","referrals","banned","referred"
         ])
         return
     records = ws.get_all_records()
@@ -104,7 +105,8 @@ def _load_users():
             "shop_items": r.get("shop_items", ""),
             "tasks_progress": r.get("tasks_progress", ""),
             "referrals": _safe_int(r.get("referrals")),
-            "banned": r.get("banned", "") == "TRUE" if isinstance(r.get("banned"), str) else bool(r.get("banned", False))
+            "banned": _safe_bool(r.get("banned")),
+            "referred": _safe_bool(r.get("referred"))
         }
 
 def _load_clans():
@@ -181,7 +183,6 @@ def _load_ratings():
     for r in records:
         _cache["ratings"][str(r["user_id"])] = _safe_int(r.get("stars"))
 
-# ── خيط المزامنة ────────────────────────────────────────────────
 def _sync_loop():
     while True:
         time.sleep(30)
@@ -216,9 +217,9 @@ def _flush_users():
         u = _cache["users"].get(uid)
         if not u:
             continue
-        # تحويل boolean banned إلى نص "TRUE"/"FALSE" عشان الـ sheet
         u_sheet = dict(u)
         u_sheet["banned"] = "TRUE" if u_sheet.get("banned") else "FALSE"
+        u_sheet["referred"] = "TRUE" if u_sheet.get("referred") else "FALSE"
         row_data = [str(u_sheet.get(h, "")) for h in headers]
         if uid in id_to_row:
             ws.update(f"A{id_to_row[uid]}", [row_data])
@@ -261,7 +262,7 @@ def _flush_ratings():
         else:
             ws.append_row([uid, str(stars), ""])
 
-# ── واجهة API ──────────────────────────────────────────────────
+# ── واجهة API المحدثة ────────────────────────────────────────
 def get_or_create_user(user_id, name, username):
     if not _initialized:
         init_cache()
@@ -271,7 +272,7 @@ def get_or_create_user(user_id, name, username):
             "user_id": uid, "name": name, "username": username or "",
             "points": 0, "clan": "", "wins": 0, "losses": 0,
             "draws": 0, "rating": 0, "daily_tasks": "", "shop_items": "",
-            "tasks_progress": "", "referrals": 0, "banned": False
+            "tasks_progress": "", "referrals": 0, "banned": False, "referred": False
         }
         _cache["users"][uid] = u
         with _lock:
@@ -361,7 +362,29 @@ def get_avg_rating():
         return 0, 0
     return round(sum(ratings) / len(ratings), 1), len(ratings)
 
-# ── القنوات النشطة ─────────────────────────────────────────────
+# ── دوال إدارة المستخدمين (تمت إضافتها) ─────────────────────
+def is_banned(user_id):
+    u = get_user(user_id)
+    return u.get("banned", False) if u else False
+
+def ban_user(user_id):
+    update_user(user_id, banned=True)
+
+def unban_user(user_id):
+    update_user(user_id, banned=False)
+
+def has_been_referred(user_id):
+    u = get_user(user_id)
+    return u.get("referred", False) if u else False
+
+def mark_referred(user_id):
+    update_user(user_id, referred=True)
+
+def get_referral_count(user_id):
+    u = get_user(user_id)
+    return _safe_int(u.get("referrals")) if u else 0
+
+# ── دوال القنوات (موجودة بالفعل) ────────────────────────────
 def add_active_channel(channel_id, title):
     if not _initialized:
         init_cache()
