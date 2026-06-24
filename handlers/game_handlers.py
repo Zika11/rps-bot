@@ -13,14 +13,17 @@ async def process_solo_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     data = query.data  # example: solo_123_rock
-    _, game_id, player_choice = data.split("_")
-
-    game_id = int(game_id)
+    try:
+        _, game_id, player_choice = data.split("_")
+        game_id = int(game_id)
+    except Exception:
+        await query.edit_message_text("❌ حصل خطأ في البيانات")
+        return
 
     result = state.play_solo_round(game_id, player_choice)
 
     if not result:
-        await query.edit_message_text("❌ حصل خطأ")
+        await query.edit_message_text("❌ اللعبة غير موجودة أو انتهت")
         return
 
     text = (
@@ -30,17 +33,9 @@ async def process_solo_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🏆 النتيجة: {result['result']}"
     )
 
-    # 🔥 أزرار بعد النتيجة
-    buttons = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🔄 العب تاني", callback_data="replay_solo"),
-            InlineKeyboardButton("🏠 القائمة", callback_data="main_menu")
-        ]
-    ])
-
     await query.edit_message_text(
         text,
-        reply_markup=buttons
+        reply_markup=keyboards.after_game_buttons()
     )
 
     state.finish_solo_game(game_id)
@@ -59,7 +54,7 @@ async def replay_solo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text(
         "🎮 اختار حركتك:",
-        reply_markup=keyboards.choice_buttons(f"solo_{game_id}")
+        reply_markup=keyboards.solo_choice_buttons(game_id)
     )
 
 
@@ -77,4 +72,7 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await replay_solo(update, context)
 
     elif data == "main_menu":
-        await query.edit_message_text("🏠 رجعنا للقائمة")
+        await query.edit_message_text(
+            "🏠 القائمة الرئيسية:",
+            reply_markup=keyboards.main_menu()
+        )
