@@ -44,6 +44,22 @@ THEME_ICONS = THEMES
 DEFAULT_RATING = 1000
 RATING_K = 32
 
+# 🆕 نظام الرانكات (ELO Tiers)
+RATING_TIERS = [
+    (0, 999, "برونز", "🥉"),
+    (1000, 1199, "فضة", "🥈"),
+    (1200, 1399, "ذهبي", "🥇"),
+    (1400, 1599, "بلاتينيوم", "🔮"),
+    (1600, 1799, "ماسي", "💎"),
+    (1800, 9999, "أسطورة", "👑")
+]
+
+def get_tier_info(rating):
+    for low, high, name, icon in RATING_TIERS:
+        if low <= rating <= high:
+            return name, icon
+    return "غير مصنف", "❓"
+
 SHOP_ITEMS = {
     "double_points_1h": {"type": "booster", "name": "نقاط مضاعفة (ساعة)", "price": 50, "duration_hours": 1},
     "shield_1h": {"type": "booster", "name": "درع الخسارة (ساعة)", "price": 40, "duration_hours": 1},
