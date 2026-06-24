@@ -1,7 +1,7 @@
 import os
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
-FOUNDER_ID = 123456789   # ضع هنا معرفك الرقمي في تيليجرام
+FOUNDER_ID = 1232067711
 
 CHOICES = {
     "rock": "🪨",
