@@ -226,6 +226,10 @@ async def web_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     web_link = f"{base_url}/?chat={chat_id}"
     await update.message.reply_text(f"🔗 رابط اللعبة على الويب:\n{web_link}")
 
+# ---------- 🆕 أمر /game لفتح Mini App ----------
+async def game_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("اضغط للعب:", reply_markup=keyboards.mini_app_button())
+
 # ---------- معالج الأزرار الرئيسي ----------
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1281,6 +1285,7 @@ def main():
     app.add_handler(CommandHandler("drop", drop_command))
     app.add_handler(CommandHandler("teambattle", teambattle_command))
     app.add_handler(CommandHandler("web", web_command))
+    app.add_handler(CommandHandler("game", game_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
