@@ -1,6 +1,5 @@
 import asyncio
 
-# لتخزين الألعاب النشطة (مفتاح: user_id أو معرف اللعبة، قيمة: تفاصيل)
 active_games = {}
-pending_matches = {}  # مباريات عشوائية بانتظار خصم
+pending_matches = []
 active_locks = asyncio.Lock()
