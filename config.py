@@ -1,46 +1,71 @@
 import os
 
-TOKEN = os.environ.get("BOT_TOKEN")
-if not TOKEN:
-    raise ValueError("❌ BOT_TOKEN غير موجود!")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
+FOUNDER_ID = 123456789  # ضع معرف المؤسس (مستخدم تيليجرام رقمي)
 
-try:
-    FOUNDER_ID = int(os.environ.get("FOUNDER_ID", "1232067711"))
-except (ValueError, TypeError):
-    FOUNDER_ID = 1232067711
-
-CHOICES = {"rock": "🪨 حجر", "paper": "📄 ورقة", "scissors": "✂️ مقص"}
-WIN_MAP = {"rock": "scissors", "scissors": "paper", "paper": "rock"}
-THEME_ICONS = {
-    "theme_1": CHOICES,
-    "theme_2": {"rock":"🟡 حجر","paper":"🟨 ورقة","scissors":"🟧 مقص"},
-    "theme_3": {"rock":"🔥 حجر","paper":"🌪️ ورقة","scissors":"💧 مقص"},
-    "theme_4": {"rock":"🌍 حجر","paper":"🌟 ورقة","scissors":"🌙 مقص"}
-}
-CHOICES_SPOCK = {"rock": "🪨", "paper": "📄", "scissors": "✂️", "lizard": "🦎", "spock": "🖖"}
-WIN_MAP_SPOCK = {
-    "scissors": ["paper", "lizard"], "paper": ["rock", "spock"],
-    "rock": ["lizard", "scissors"], "lizard": ["spock", "paper"],
-    "spock": ["scissors", "rock"]
+# خيارات اللعبة الأساسية
+CHOICES = {
+    "rock": "🪨",
+    "paper": "📄",
+    "scissors": "✂️"
 }
 
-WIN_POINTS_SOLO = 10
-LOSS_POINTS_SOLO = -3
-DRAW_POINTS_SOLO = 5
-WIN_POINTS_MULTI = 15
-LOSS_POINTS_MULTI = -3
-ROUND_WIN_POINTS = 5
-ROUND_LOSS_POINTS = -1
-ROUND_DRAW_POINTS = 2
-DAILY_REFERRAL_POINTS = 1000
-
-GAME_TIMEOUT = 120
-CHANNEL_ROUND_INTERVAL = 120
-MAX_STREAK_REWARD = 100
-MIN_STREAK_MULTIPLIER = 10
-MAX_STORY_LEVEL = 3
-STORY_LEVELS = {
-    1: {"boss": "الرجل الحجري", "emoji": "🗿", "story": "في مملكة الأحجار..."},
-    2: {"boss": "ملك الورق", "emoji": "📜", "story": "بعد هزيمة الرجل الحجري..."},
-    3: {"boss": "سيد المقصات", "emoji": "⚔️", "story": "أقوى زعيم في المملكة..."}
+# خريطة الفوز: المفتاح يهزم القيمة
+WIN_MAP = {
+    "rock": "scissors",
+    "paper": "rock",
+    "scissors": "paper"
 }
+
+# خيارات وضع Spock
+SPOCK_CHOICES = {
+    "rock": "🪨",
+    "paper": "📄",
+    "scissors": "✂️",
+    "lizard": "🦎",
+    "spock": "🖖"
+}
+SPOCK_WIN_MAP = {
+    "rock": ["scissors", "lizard"],
+    "paper": ["rock", "spock"],
+    "scissors": ["paper", "lizard"],
+    "lizard": ["spock", "paper"],
+    "spock": ["rock", "scissors"]
+}
+
+# الثيمات
+THEMES = {
+    "theme_1": {"rock": "🪨", "paper": "📄", "scissors": "✂️"},
+    "theme_2": {"rock": "🌑", "paper": "📰", "scissors": "⚔️"},
+    "theme_3": {"rock": "🔥", "paper": "💧", "scissors": "🌿"},
+    "theme_4": {"rock": "💎", "paper": "📜", "scissors": "⚡"},
+    "theme_5": {"rock": "🍖", "paper": "🧻", "scissors": "🔪"}
+}
+
+THEME_ICONS = THEMES  # توافق الأسماء مع utils
+
+# التصنيف
+DEFAULT_RATING = 1000
+RATING_K = 32
+
+# إعدادات المتجر
+SHOP_ITEMS = {
+    "double_points_1h": {"type": "booster", "name": "نقاط مضاعفة (ساعة)", "price": 50, "duration_hours": 1},
+    "shield_1h": {"type": "booster", "name": "درع الخسارة (ساعة)", "price": 40, "duration_hours": 1},
+    "extra_gems_1h": {"type": "booster", "name": "جواهر إضافية (ساعة)", "price": 30, "duration_hours": 1},
+}
+
+TREASURE_BOX_PRICE = 100
+TREASURE_REWARDS = [
+    ("points", 50), ("points", 100), ("gems", 5),
+    ("title", "ملك الصندوق"), ("theme", "theme_3"), ("booster", "double_points_1h")
+]
+
+TITLES_SHOP = [
+    {"id": "title_king", "name": "👑 الملك", "price": 200},
+    {"id": "title_legend", "name": "🏆 الأسطورة", "price": 500},
+]
+THEMES_SHOP = [
+    {"id": "theme_2", "name": "🌑 الظلال", "price": 150},
+    {"id": "theme_4", "name": "💎 الكريستال", "price": 250},
+]
