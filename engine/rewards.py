@@ -2,7 +2,7 @@ import sqlite3, logging
 from datetime import datetime
 import config
 
-DB = "rps_bot.db"
+DB = config.DB_NAME
 logger = logging.getLogger(__name__)
 
 def get_conn():
@@ -58,7 +58,6 @@ def batch_process_channel_rewards_with_streak(chat_id, players_rewards):
         current_level = user_data.get(uid, {"level": 1})["level"]
 
         new_xp = current_xp + xp_gained
-        # حساب المستوى الجديد
         new_level = current_level
         for lvl in sorted(config.LEVEL_THRESHOLDS.keys()):
             if new_xp >= config.LEVEL_THRESHOLDS[lvl]:
