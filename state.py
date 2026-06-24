@@ -1,12 +1,6 @@
 import asyncio
 
-active_games_lock = asyncio.Lock()
-pending_matches_lock = asyncio.Lock()
-channel_games_lock = asyncio.Lock()
-channel_tasks_lock = asyncio.Lock()
-
-pending_matches = []
+# لتخزين الألعاب النشطة (مفتاح: user_id أو معرف اللعبة، قيمة: تفاصيل)
 active_games = {}
-channel_tasks = {}
-channel_games = {}
-channel_last_play = {}
+pending_matches = {}  # مباريات عشوائية بانتظار خصم
+active_locks = asyncio.Lock()
