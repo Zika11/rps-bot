@@ -3,38 +3,33 @@ from datetime import datetime
 
 DB = "rps_bot.db"
 
-# أقفال للحفاظ على التزامن
 pending_lock = asyncio.Lock()
 active_lock = asyncio.Lock()
 
-# ---------- إدارة المباريات العشوائية (Random) ----------
+# ---------- إدارة المباريات العشوائية ----------
 async def add_pending(user_id):
     async with pending_lock:
         conn = sqlite3.connect(DB)
         cur = conn.execute("SELECT user_id FROM pending_matches WHERE user_id=?", (user_id,))
         if cur.fetchone():
             conn.close()
-            return None  # موجود بالفعل
-        # البحث عن لاعب آخر منتظر
+            return None
         cur = conn.execute("SELECT user_id FROM pending_matches LIMIT 1")
         other = cur.fetchone()
         if other:
             opp_id = other[0]
-            # إزالته من قائمة الانتظار
             conn.execute("DELETE FROM pending_matches WHERE user_id=?", (opp_id,))
-            # إنشاء لعبة نشطة
-            game_id = f"{user_id}_{opp_id}_{int(datetime.now().timestamp())}"
+            game_id = f"random_{user_id}_{opp_id}_{int(datetime.now().timestamp())}"
             conn.execute("INSERT INTO active_games (game_id, player1, player2, type, status, data) VALUES (?,?,?,?,?,?)",
                         (game_id, user_id, opp_id, "random", "waiting", json.dumps({})))
             conn.commit()
             conn.close()
-            return opp_id  # تم العثور على خصم
+            return opp_id
         else:
-            # إضافة اللاعب الحالي للانتظار
             conn.execute("INSERT INTO pending_matches (user_id) VALUES (?)", (user_id,))
             conn.commit()
             conn.close()
-            return True  # في الانتظار
+            return True
 
 async def remove_game(game_id):
     async with active_lock:
@@ -43,7 +38,7 @@ async def remove_game(game_id):
         conn.commit()
         conn.close()
 
-# ---------- ألعاب فردية (Solo) ----------
+# ---------- ألعاب فردية ----------
 def start_solo_game(user_id):
     game_id = f"solo_{user_id}_{int(datetime.now().timestamp())}"
     conn = sqlite3.connect(DB)
@@ -67,6 +62,14 @@ def get_game(game_id):
     conn.close()
     return dict(game) if game else None
 
+def get_game_by_player(user_id):
+    conn = sqlite3.connect(DB)
+    conn.row_factory = sqlite3.Row
+    game = conn.execute("SELECT * FROM active_games WHERE (player1=? OR player2=?) AND status='waiting'",
+                        (user_id, user_id)).fetchone()
+    conn.close()
+    return dict(game) if game else None
+
 def set_game_move(game_id, player_id, move):
     conn = sqlite3.connect(DB)
     game = conn.execute("SELECT data FROM active_games WHERE game_id=?", (game_id,)).fetchone()
@@ -85,7 +88,7 @@ def get_game_moves(game_id):
     if not game: return {}
     return json.loads(game[0])
 
-# ---------- متغيرات أخرى خاصة بالمشاهدة والتحديات المفتوحة (بقيت كما هي) ----------
+# ---------- باقي المتغيرات (للميزات الأخرى) ----------
 spectate_challenges = {}
 spectate_lock = asyncio.Lock()
 
