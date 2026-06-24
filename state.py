@@ -6,7 +6,6 @@ DB = "rps_bot.db"
 pending_lock = asyncio.Lock()
 active_lock = asyncio.Lock()
 
-# ---------- إدارة المباريات العشوائية ----------
 async def add_pending(user_id):
     async with pending_lock:
         conn = sqlite3.connect(DB)
@@ -38,7 +37,6 @@ async def remove_game(game_id):
         conn.commit()
         conn.close()
 
-# ---------- ألعاب فردية ----------
 def start_solo_game(user_id):
     game_id = f"solo_{user_id}_{int(datetime.now().timestamp())}"
     conn = sqlite3.connect(DB)
@@ -54,7 +52,6 @@ def finish_solo_game(game_id):
     conn.commit()
     conn.close()
 
-# ---------- دوال مساعدة ----------
 def get_game(game_id):
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
@@ -88,7 +85,7 @@ def get_game_moves(game_id):
     if not game: return {}
     return json.loads(game[0])
 
-# ---------- باقي المتغيرات (للميزات الأخرى) ----------
+# --- متغيرات الميزات الأخرى ---
 spectate_challenges = {}
 spectate_lock = asyncio.Lock()
 
@@ -102,3 +99,10 @@ group_solo_games = {}
 
 channel_settings = {}
 channel_settings_lock = asyncio.Lock()
+
+# 🆕 للميزات الجديدة
+boss_spawn_task = None
+boss_spawn_lock = asyncio.Lock()
+
+season_check_task = None
+season_lock = asyncio.Lock()
