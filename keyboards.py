@@ -198,11 +198,33 @@ def channel_leaderboard_button(chat_id):
         [InlineKeyboardButton("🏆 قائمة الأفضل", callback_data=f"ch_leaderboard_{chat_id}")]
     ])
 
-# 🆕 زر فتح Mini App
+# 🆕 أزرار Mini App
 def mini_app_button():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
             "🎮 افتح اللعبة",
             web_app=WebAppInfo(url="https://rps-bot-six.vercel.app")
         )]
+    ])
+
+# 🆕 أزرار القناة التفاعلية
+def rps_keyboard():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🪨 Rock", callback_data="move_rock"),
+            InlineKeyboardButton("📄 Paper", callback_data="move_paper"),
+            InlineKeyboardButton("✂️ Scissors", callback_data="move_scissors"),
+        ]
+    ])
+
+def channel_main_menu(chat_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎮 Play", callback_data=f"channel_play_{chat_id}")],
+        [InlineKeyboardButton("🏆 Leaderboard", callback_data=f"weekly_leaderboard_{chat_id}")],
+        [InlineKeyboardButton("👤 Profile", callback_data="profile")],
+    ])
+
+def weekly_leaderboard_button(chat_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 الأفضل هذا الأسبوع", callback_data=f"weekly_leaderboard_{chat_id}")]
     ])
