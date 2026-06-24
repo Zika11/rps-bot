@@ -1,20 +1,25 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { getLeaderboard } from '../api'
 
-const CHAT_ID = -1001234567890
-
 function Leaderboard() {
+  const [searchParams] = useSearchParams()
+  const chatId = searchParams.get('chat') || '-1001234567890'
+
   const [players, setPlayers] = useState([])
 
   useEffect(() => {
-    getLeaderboard(CHAT_ID)
-      .then(data => setPlayers(data))
-      .catch(console.error)
-  }, [])
+    if (chatId) {
+      getLeaderboard(chatId)
+        .then(data => setPlayers(data))
+        .catch(console.error)
+    }
+  }, [chatId])
 
   return (
     <div>
       <h2>🏆 المتصدرون</h2>
+      <p>معرف القناة: <strong>{chatId}</strong></p>
       <ul className="leaderboard">
         {players.map((p, i) => (
           <li key={i}>
