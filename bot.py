@@ -468,6 +468,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "boss_status":
         await handlers.boss_command(update, context)
 
+    # لوحة تحكم الأدمن التفاعلية
+    elif data == "admin":
+        await admin_panel(update, context)
+    elif data == "admin_stats":
+        await admin_stats(update, context)
+    elif data == "admin_broadcast":
+        await admin_broadcast_prompt(update, context)
+    elif data == "admin_set_points":
+        await admin_set_points_prompt(update, context)
+    elif data == "admin_channels":
+        await admin_channels_list(update, context)
+    elif data == "admin_reset":
+        await admin_reset_games(update, context)
+
 # ---------- دوال اللعب الأساسية ----------
 async def process_solo_pick(update, context, move, game_id):
     query = update.callback_query
@@ -806,78 +820,58 @@ async def stop_channel_command(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         await update.message.reply_text(f"خطأ: {str(e)}")
 
-# ---------- Admin Panel ----------
+# ---------- Admin Panel (تفاعلية) ----------
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not utils.is_founder(update.effective_user.id):
         return
+    await update.message.reply_text("🛡️ **لوحة التحكم**", reply_markup=keyboards.admin_menu())
+
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
     total_users = len(db.get_all_user_ids())
     conn = sqlite3.connect("rps_bot.db")
     total_games = conn.execute("SELECT COUNT(*) FROM active_games").fetchone()[0]
+    total_clans = conn.execute("SELECT COUNT(*) FROM clans").fetchone()[0]
     conn.close()
-    text = (f"🛡️ **لوحة التحكم**\n"
-            f"👥 المستخدمين: {total_users}\n"
-            f"🎮 المباريات النشطة: {total_games}\n\n"
-            f"الأوامر:\n"
-            f"/broadcast <الرسالة>\n"
-            f"/set_points <user_id> <points> <gems>\n"
-            f"/channels\n"
-            f"/reset_games")
-    await update.message.reply_text(text)
+    text = (f"👥 المستخدمين: {total_users}\n"
+            f"🎮 المباريات النشطة: {total_games}\n"
+            f"🏰 العشائر: {total_clans}")
+    await query.edit_message_text(text, reply_markup=keyboards.admin_menu())
 
-async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not utils.is_founder(update.effective_user.id): return
-    msg = " ".join(context.args)
-    if not msg:
-        await update.message.reply_text("أكتب الرسالة بعد الأمر.")
-        return
-    success, fail = 0, 0
-    for uid in db.get_all_user_ids():
-        try:
-            await context.bot.send_message(uid, msg)
-            success += 1
-        except: fail += 1
-    await update.message.reply_text(f"تم الإرسال: {success} نجاح, {fail} فشل.")
+async def admin_broadcast_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.edit_message_text("أرسل الرسالة التي تريد إرسالها للجميع:", reply_markup=keyboards.back_button("admin"))
+    context.user_data["awaiting_broadcast"] = True
 
-async def set_points_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not utils.is_founder(update.effective_user.id): return
-    try:
-        uid = int(context.args[0])
-        points = int(context.args[1]) if len(context.args) > 1 else None
-        gems = int(context.args[2]) if len(context.args) > 2 else None
-        kwargs = {}
-        if points is not None: kwargs["points"] = points
-        if gems is not None: kwargs["gems"] = gems
-        db.update_user(uid, **kwargs)
-        await update.message.reply_text(f"تم تحديث المستخدم {uid}.")
-    except:
-        await update.message.reply_text("استخدم: /set_points <user_id> <points> <gems>")
+async def admin_set_points_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.edit_message_text("أرسل:\n`user_id points gems`", reply_markup=keyboards.back_button("admin"))
+    context.user_data["awaiting_set_points"] = True
 
-async def reset_games_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not utils.is_founder(update.effective_user.id): return
+async def admin_channels_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    async with state.channel_settings_lock:
+        chans = list(state.channel_settings.keys())
+    text = "القنوات المفعلة:\n" + "\n".join([str(c) for c in chans]) if chans else "لا توجد"
+    await query.edit_message_text(text, reply_markup=keyboards.admin_menu())
+
+async def admin_reset_games(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
     conn = sqlite3.connect("rps_bot.db")
     conn.execute("DELETE FROM active_games")
     conn.execute("DELETE FROM pending_matches")
     conn.commit()
     conn.close()
-    await update.message.reply_text("تم مسح جميع المباريات العالقة.")
+    await query.answer("تم مسح المباريات العالقة.")
 
-async def channels_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not utils.is_founder(update.effective_user.id): return
-    async with state.channel_settings_lock:
-        chans = list(state.channel_settings.keys())
-    if not chans:
-        await update.message.reply_text("لا توجد قنوات مفعلة.")
-        return
-    text = "القنوات المفعلة:\n" + "\n".join([str(c) for c in chans])
-    await update.message.reply_text(text)
-
-# ---------- معالج النصوص (بما فيه @mention للمجموعات) ----------
+# ---------- معالج النصوص (بما فيه @mention وأوامر الأدمن) ----------
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     msg = update.message.text.strip() if update.message.text else ""
     chat_type = update.effective_chat.type
     bot_username = context.bot.username.lower()
     entities = update.message.entities or update.message.caption_entities
+
     if entities and chat_type in ["group", "supergroup"]:
         for ent in entities:
             if ent.type == MessageEntity.MENTION:
@@ -889,10 +883,39 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if ent.user.id == context.bot.id:
                     await handle_group_mention(update, context, update.effective_chat.id)
                     return
+
     if chat_type == "private":
+        # التعامل مع أوامر الأدمن التفاعلية
+        if context.user_data.get("awaiting_broadcast"):
+            broadcast_msg = update.message.text
+            success, fail = 0, 0
+            for uid in db.get_all_user_ids():
+                try:
+                    await context.bot.send_message(uid, broadcast_msg)
+                    success += 1
+                except:
+                    fail += 1
+            await update.message.reply_text(f"تم: {success} نجاح, {fail} فشل")
+            context.user_data["awaiting_broadcast"] = False
+            return
+
+        if context.user_data.get("awaiting_set_points"):
+            try:
+                parts = update.message.text.split()
+                uid = int(parts[0])
+                pts = int(parts[1])
+                gems = int(parts[2])
+                db.update_user(uid, points=pts, gems=gems)
+                await update.message.reply_text("تم التحديث")
+            except:
+                await update.message.reply_text("صيغة خاطئة")
+            context.user_data["awaiting_set_points"] = False
+            return
+
         if len(msg) > 100:
             await update.message.reply_text("النص طويل جداً.")
             return
+
         if context.user_data.get("awaiting_friend_username"):
             await handlers.process_friend_username(update, context)
         elif context.user_data.get("awaiting_clan_name"):
