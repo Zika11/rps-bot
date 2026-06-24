@@ -1,4 +1,5 @@
 import json, logging, random
+from collections import defaultdict
 from config import *
 import db
 
@@ -13,19 +14,41 @@ def get_choices_for_user(user_id):
 def get_result(p1, p2):
     return "draw" if p1 == p2 else ("win" if WIN_MAP[p1] == p2 else "loss")
 
-def smart_bot_choice(user_id):
+# 🧠 ذكاء اصطناعي متطور - Markov Chain Order-2
+def markov_bot_choice(user_id):
     u = db.get_user(user_id)
-    if not u: return random.choice(list(CHOICES.keys()))
+    if not u:
+        return random.choice(list(CHOICES.keys()))
     try:
         moves = json.loads(u.get("move_history", "[]"))
     except:
         moves = []
-    if len(moves) < 5: return random.choice(list(CHOICES.keys()))
-    from collections import Counter
-    counter = Counter(moves)
-    most_common = counter.most_common(1)[0][0]
+    if len(moves) < 3:
+        # عدد الحركات غير كافي -> عشوائي
+        return random.choice(list(CHOICES.keys()))
+
+    # بناء نموذج Markov order-2: (moves[-2], moves[-1]) -> التكرارات
+    chain = defaultdict(lambda: defaultdict(int))
+    for i in range(len(moves) - 2):
+        key = (moves[i], moves[i+1])
+        next_move = moves[i+2]
+        chain[key][next_move] += 1
+
+    # آخر حركتين للمستخدم
+    last_two = (moves[-2], moves[-1])
+    possible = chain.get(last_two)
+    if not possible:
+        # لا توجد بيانات، استخدم توقع عشوائي
+        predicted = random.choice(list(CHOICES.keys()))
+    else:
+        # اختر التوقع الأكثر تكراراً
+        predicted = max(possible, key=possible.get)
+
+    # اختيار الحركة المضادة للتوقع
     for k, v in WIN_MAP.items():
-        if v == most_common: return k
+        if v == predicted:
+            return k
+    # احتياطي
     return random.choice(list(CHOICES.keys()))
 
 def update_user_moves(user_id, move):
