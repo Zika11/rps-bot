@@ -1,4 +1,4 @@
-import sqlite3, json, logging
+import sqlite3, json, logging, random
 from datetime import datetime, date
 import config
 
@@ -9,6 +9,7 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
+# --- دوال المستخدمين ---
 def get_user(user_id):
     conn = get_conn()
     row = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
@@ -50,6 +51,7 @@ def get_all_user_ids():
     conn.close()
     return [r[0] for r in rows]
 
+# --- العشائر ---
 def get_clan(clan_name):
     conn = get_conn()
     row = conn.execute("SELECT * FROM clans WHERE name=?", (clan_name,)).fetchone()
@@ -116,6 +118,7 @@ def get_top_ratings(limit=10):
     conn.close()
     return [dict(r) for r in rows]
 
+# --- الأصدقاء ---
 def send_friend_request(sender, receiver):
     conn = get_conn()
     try:
@@ -153,6 +156,7 @@ def get_friends(user_id):
     conn.close()
     return [r[0] for r in rows]
 
+# --- البطولات ---
 def create_tournament(name):
     conn = get_conn()
     cur = conn.execute("INSERT INTO tournaments (name, status) VALUES (?, 'open')", (name,))
@@ -219,19 +223,13 @@ def add_clan_war_points(clan, amount):
     conn.commit()
     conn.close()
 
-# ---------- دالة التحديث الذري لنتيجة المباراة ----------
 def apply_game_result(user_id, result, move, opponent_id=None):
-    """
-    تحديث جميع إحصاءات المستخدم دفعة واحدة بناءً على نتيجة اللعب.
-    تُرجع السجل الجديد للمستخدم أو None لو المستخدم مش موجود.
-    """
     conn = get_conn()
     u = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
     if not u:
         conn.close()
         return None
 
-    # حساب القيم الجديدة
     wins = u["wins"] + (1 if result == "win" else 0)
     losses = u["losses"] + (1 if result == "loss" else 0)
     draws = u["draws"] + (1 if result == "draw" else 0)
@@ -248,7 +246,6 @@ def apply_game_result(user_id, result, move, opponent_id=None):
         WHERE user_id = ?
     """, (wins, losses, draws, points, gems, rock_used, win_streak, streak_count, user_id))
 
-    # تحديث التصنيف Elo
     rating = conn.execute("SELECT rating FROM ratings WHERE user_id=?", (user_id,)).fetchone()
     rating = rating[0] if rating else config.DEFAULT_RATING
     opp_rating = config.DEFAULT_RATING
@@ -261,6 +258,9 @@ def apply_game_result(user_id, result, move, opponent_id=None):
     new_rating = int(rating + config.RATING_K * (score - expected))
     conn.execute("UPDATE ratings SET rating = ? WHERE user_id = ?", (new_rating, user_id))
 
+    # إضافة XP للباتل باس (باستثناء حالة الاستدعاء المزدوجة، نضيف هنا للمباريات الفعلية)
+    add_battle_pass_xp(user_id, 15, conn)
+
     conn.commit()
     conn.close()
     return {
@@ -270,3 +270,80 @@ def apply_game_result(user_id, result, move, opponent_id=None):
         "rock_used": rock_used, "streak_count": streak_count,
         "rating": new_rating
     }
+
+# --- 🆕 دوال الميزات الجديدة ---
+def claim_daily(user_id):
+    conn = get_conn()
+    today = date.today().isoformat()
+    row = conn.execute("SELECT * FROM daily_claims WHERE user_id=?", (user_id,)).fetchone()
+    if row and row["last_claimed_date"] == today:
+        conn.close()
+        return None
+    if row:
+        last_date = row["last_claimed_date"]
+        streak = row["streak"]
+        if last_date:
+            last = date.fromisoformat(last_date)
+            diff = (date.today() - last).days
+            if diff == 1:
+                streak += 1
+            else:
+                streak = 1
+        else:
+            streak = 1
+    else:
+        streak = 1
+    if streak > 7:
+        streak = 1
+    reward = config.DAILY_REWARDS.get(streak, (0,0))
+    points, gems = reward
+    u = conn.execute("SELECT points, gems FROM users WHERE user_id=?", (user_id,)).fetchone()
+    if u:
+        conn.execute("UPDATE users SET points=?, gems=? WHERE user_id=?", 
+                     (u["points"] + points, u["gems"] + gems, user_id))
+    conn.execute("INSERT OR REPLACE INTO daily_claims (user_id, last_claimed_date, streak) VALUES (?,?,?)",
+                 (user_id, today, streak))
+    # إضافة XP يومي للباتل باس
+    add_battle_pass_xp(user_id, 10, conn)
+    conn.commit()
+    conn.close()
+    return {"day": streak, "points": points, "gems": gems}
+
+def get_battle_pass(user_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM battle_pass WHERE user_id=?", (user_id,)).fetchone()
+    if not row:
+        conn.execute("INSERT OR IGNORE INTO battle_pass (user_id) VALUES (?)", (user_id,))
+        conn.commit()
+        row = conn.execute("SELECT * FROM battle_pass WHERE user_id=?", (user_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else {"user_id": user_id, "season": 1, "xp": 0, "level": 1, "premium": 0}
+
+def add_battle_pass_xp(user_id, xp_amount, existing_conn=None):
+    conn = existing_conn if existing_conn else get_conn()
+    bp = conn.execute("SELECT * FROM battle_pass WHERE user_id=?", (user_id,)).fetchone()
+    if not bp:
+        conn.execute("INSERT INTO battle_pass (user_id, xp, level) VALUES (?,?,?)", (user_id, xp_amount, 1))
+        if not existing_conn:
+            conn.commit()
+            conn.close()
+        return 1
+    new_xp = bp["xp"] + xp_amount
+    new_level = bp["level"]
+    while new_level < config.MAX_BATTLE_PASS_LEVEL and new_xp >= new_level * config.BATTLE_PASS_XP_PER_LEVEL:
+        new_xp -= new_level * config.BATTLE_PASS_XP_PER_LEVEL
+        new_level += 1
+    conn.execute("UPDATE battle_pass SET xp=?, level=? WHERE user_id=?", (new_xp, new_level, user_id))
+    if not existing_conn:
+        conn.commit()
+        conn.close()
+    return new_level
+
+def spin_wheel(user_id):
+    r = random.random()
+    cumulative = 0
+    for reward_type, value, prob in config.WHEEL_REWARDS:
+        cumulative += prob
+        if r <= cumulative:
+            return (reward_type, value)
+    return ("points", 50)
