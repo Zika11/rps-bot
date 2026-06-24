@@ -1,4 +1,4 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 def main_menu(lang="ar"):
     if lang == "ar":
@@ -196,4 +196,13 @@ def channel_vote_buttons(chat_id):
 def channel_leaderboard_button(chat_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🏆 قائمة الأفضل", callback_data=f"ch_leaderboard_{chat_id}")]
+    ])
+
+# 🆕 زر فتح Mini App
+def mini_app_button():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "🎮 افتح اللعبة",
+            web_app=WebAppInfo(url="https://rps-bot-six.vercel.app")
+        )]
     ])
