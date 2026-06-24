@@ -100,9 +100,21 @@ group_solo_games = {}
 channel_settings = {}
 channel_settings_lock = asyncio.Lock()
 
-# 🆕 للميزات الجديدة
+team_battle_moves = {}
+
 boss_spawn_task = None
 boss_spawn_lock = asyncio.Lock()
 
 season_check_task = None
 season_lock = asyncio.Lock()
+
+# أقفال التصويت لكل قناة
+vote_locks = {}
+vote_lock_creation = asyncio.Lock()
+
+async def get_vote_lock(chat_id):
+    """إرجاع قفل خاص بالقناة وإنشاؤه إذا لزم الأمر"""
+    async with vote_lock_creation:
+        if chat_id not in vote_locks:
+            vote_locks[chat_id] = asyncio.Lock()
+        return vote_locks[chat_id]
