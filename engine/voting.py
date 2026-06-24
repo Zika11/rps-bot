@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from collections import Counter
 import config
 
-DB = "rps_bot.db"
+DB = config.DB_NAME
 logger = logging.getLogger(__name__)
 
 def get_conn():
@@ -152,7 +152,6 @@ def finish_channel_round(chat_id, event=None):
             banned_move = config.BANNED_MOVE_EVENTS[event]
             filtered = {uid: mv for uid, mv in valid_choices.items() if mv != banned_move}
             if filtered:
-                # سنمرر filtered لاحقاً
                 pass
             else:
                 winning_moves = []
@@ -160,7 +159,6 @@ def finish_channel_round(chat_id, event=None):
 
     # إذا لم يتم تعيين winning_moves من أحداث الفوضى، نطبق Real RPS Logic
     if not winning_moves and not draw:
-        # استخدام البيانات المصفّاة إذا وجدت
         data = filtered if filtered else valid_choices
         if not data:
             winning_moves = []
@@ -186,7 +184,6 @@ def finish_channel_round(chat_id, event=None):
                 winning_moves = []
                 draw = True
             else:
-                # حالة وجود حركة واحدة فقط (أو لا شيء) - تلك الحركة تفوز
                 present = [move for move, cnt in data_counts.items() if cnt > 0]
                 if len(present) == 1:
                     winning_moves = [present[0]]
@@ -195,7 +192,6 @@ def finish_channel_round(chat_id, event=None):
                     winning_moves = []
                     draw = False
 
-    # حساب الفائزين بناءً على winning_moves
     if winning_moves:
         winners = [uid for uid, mv in valid_choices.items() if mv in winning_moves]
     else:
