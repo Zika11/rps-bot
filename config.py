@@ -109,9 +109,27 @@ CHANNEL_LOOP_REWARDS = {
 # Meta Game
 STREAK_BONUS = 2
 EVENT_CHANCE = 0.3
-POSSIBLE_EVENTS = ["double_points", "shuffle", "boss", "ban_rock", "ban_paper", "ban_scissors", "reverse_win"]
+POSSIBLE_EVENTS = ["double_points", "shuffle", "boss", "ban_rock", "ban_paper", "ban_scissors", "reverse_win", "random_winner"]
 BANNED_MOVE_EVENTS = {"ban_rock": "rock", "ban_paper": "paper", "ban_scissors": "scissors"}
 PREDICTION_BONUS = 3
 
-# تجميد التصويت (ثواني)
+# تجميد التصويت
 VOTE_FREEZE_SECONDS = 2
+
+# مضاعفات الستريك
+STREAK_MULTIPLIERS = {
+    3: 2,
+    5: 3
+}
+
+# 🆕 XP System
+XP_PER_WIN = 20
+XP_PER_LOSS = 5
+XP_PER_DRAW = 10
+LEVEL_THRESHOLDS = {1: 0, 2: 50, 3: 120, 4: 220, 5: 350, 6: 500, 7: 700, 8: 1000, 9: 1400, 10: 2000}
+LEVEL_TITLES = {
+    1: ("مبتدئ", "🥉"),
+    3: ("متوسط", "🥈"),
+    5: ("متقدم", "🥇"),
+    10: ("محترف", "👑")
+}
