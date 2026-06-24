@@ -9,6 +9,21 @@ logger = logging.getLogger(__name__)
 
 models.init_db()
 
+# ---------- مهمة التنظيف الدورية ----------
+async def cleanup_stuck_games():
+    """حذف الألعاب العالقة التي مضى عليها أكثر من 5 دقائق"""
+    while True:
+        await asyncio.sleep(60)  # كل دقيقة
+        try:
+            conn = sqlite3.connect("rps_bot.db")
+            cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
+            conn.execute("DELETE FROM active_games WHERE created_at < ?", (cutoff,))
+            conn.execute("DELETE FROM pending_matches")  # تفريغ قائمة الانتظار القديمة
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"خطأ في تنظيف الألعاب العالقة: {e}")
+
 # ---------- أوامر أساسية ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -939,6 +954,9 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ---------- تشغيل البوت ----------
 def main():
+    # بدء مهمة التنظيف الدورية
+    asyncio.create_task(cleanup_stuck_games())
+
     app = Application.builder().token(config.BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("me", me_command))
