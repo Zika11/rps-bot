@@ -134,50 +134,72 @@ def finish_channel_round(chat_id, event=None):
 
     draw = False
     winning_moves = []
-    # تطبيق قواعد الفوضى
+    winners = []
+    filtered = None
+
+    # تطبيق قواعد الفوضى إن وجدت
     if event:
         if event == "reverse_win":
-            # أقل حركة هي التي تفوز
             if sorted_counts:
                 min_count = sorted_counts[-1][1]
                 winning_moves = [move for move, cnt in counts.items() if cnt == min_count]
                 draw = len(winning_moves) > 1
         elif event == "random_winner":
-            # اختيار حركة عشوائية كفائزة
             if counts:
                 winning_moves = [random.choice(list(counts.keys()))]
                 draw = False
         elif event in config.BANNED_MOVE_EVENTS:
             banned_move = config.BANNED_MOVE_EVENTS[event]
-            # استبعاد الحركة المحظورة وإعادة حساب النتائج بدونها
             filtered = {uid: mv for uid, mv in valid_choices.items() if mv != banned_move}
             if filtered:
-                moves = list(filtered.values())
-                counts = dict(Counter(moves))
-                sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
-                valid_choices = filtered
-                # إعادة حساب الفائز بدون الحركة المحظورة
-                if len(sorted_counts) >= 2 and sorted_counts[0][1] == sorted_counts[1][1]:
-                    draw = True
-                    top_count = sorted_counts[0][1]
-                    winning_moves = [move for move, cnt in sorted_counts if cnt == top_count]
-                else:
-                    draw = False
-                    winning_moves = [sorted_counts[0][0]]
+                # سنمرر filtered لاحقاً
+                pass
             else:
-                # الكل اختار المحظور → لا فائز
                 winning_moves = []
                 draw = False
-    else:
-        # بدون حدث، الحساب العادي
-        if len(sorted_counts) >= 2 and sorted_counts[0][1] == sorted_counts[1][1]:
-            draw = True
-            top_count = sorted_counts[0][1]
-            winning_moves = [move for move, cnt in sorted_counts if cnt == top_count]
-        else:
-            winning_moves = [sorted_counts[0][0]]
 
-    winners = [uid for uid, mv in valid_choices.items() if mv in winning_moves]
+    # إذا لم يتم تعيين winning_moves من أحداث الفوضى، نطبق Real RPS Logic
+    if not winning_moves and not draw:
+        # استخدام البيانات المصفّاة إذا وجدت
+        data = filtered if filtered else valid_choices
+        if not data:
+            winning_moves = []
+            draw = False
+        else:
+            data_moves = list(data.values())
+            data_counts = dict(Counter(data_moves))
+            rock_count = data_counts.get("rock", 0)
+            paper_count = data_counts.get("paper", 0)
+            scissors_count = data_counts.get("scissors", 0)
+
+            # Real RPS Logic
+            if rock_count > 0 and scissors_count > 0 and paper_count == 0:
+                winning_moves = ["rock"]
+                draw = False
+            elif scissors_count > 0 and paper_count > 0 and rock_count == 0:
+                winning_moves = ["scissors"]
+                draw = False
+            elif paper_count > 0 and rock_count > 0 and scissors_count == 0:
+                winning_moves = ["paper"]
+                draw = False
+            elif rock_count > 0 and paper_count > 0 and scissors_count > 0:
+                winning_moves = []
+                draw = True
+            else:
+                # حالة وجود حركة واحدة فقط (أو لا شيء) - تلك الحركة تفوز
+                present = [move for move, cnt in data_counts.items() if cnt > 0]
+                if len(present) == 1:
+                    winning_moves = [present[0]]
+                    draw = False
+                else:
+                    winning_moves = []
+                    draw = False
+
+    # حساب الفائزين بناءً على winning_moves
+    if winning_moves:
+        winners = [uid for uid, mv in valid_choices.items() if mv in winning_moves]
+    else:
+        winners = []
 
     new_round = current_round + 1
     conn.execute("UPDATE channel_loop_state SET round_id=?, predictions='{}', status='WAITING', round_start_time=datetime('now') WHERE chat_id=?",
