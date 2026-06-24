@@ -1,23 +1,20 @@
 import os
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
-FOUNDER_ID = 123456789  # ضع معرف المؤسس (مستخدم تيليجرام رقمي)
+FOUNDER_ID = 123456789   # ضع هنا معرفك الرقمي في تيليجرام
 
-# خيارات اللعبة الأساسية
 CHOICES = {
     "rock": "🪨",
     "paper": "📄",
     "scissors": "✂️"
 }
 
-# خريطة الفوز: المفتاح يهزم القيمة
 WIN_MAP = {
     "rock": "scissors",
     "paper": "rock",
     "scissors": "paper"
 }
 
-# خيارات وضع Spock
 SPOCK_CHOICES = {
     "rock": "🪨",
     "paper": "📄",
@@ -25,6 +22,7 @@ SPOCK_CHOICES = {
     "lizard": "🦎",
     "spock": "🖖"
 }
+
 SPOCK_WIN_MAP = {
     "rock": ["scissors", "lizard"],
     "paper": ["rock", "spock"],
@@ -33,7 +31,6 @@ SPOCK_WIN_MAP = {
     "spock": ["rock", "scissors"]
 }
 
-# الثيمات
 THEMES = {
     "theme_1": {"rock": "🪨", "paper": "📄", "scissors": "✂️"},
     "theme_2": {"rock": "🌑", "paper": "📰", "scissors": "⚔️"},
@@ -42,13 +39,11 @@ THEMES = {
     "theme_5": {"rock": "🍖", "paper": "🧻", "scissors": "🔪"}
 }
 
-THEME_ICONS = THEMES  # توافق الأسماء مع utils
+THEME_ICONS = THEMES
 
-# التصنيف
 DEFAULT_RATING = 1000
 RATING_K = 32
 
-# إعدادات المتجر
 SHOP_ITEMS = {
     "double_points_1h": {"type": "booster", "name": "نقاط مضاعفة (ساعة)", "price": 50, "duration_hours": 1},
     "shield_1h": {"type": "booster", "name": "درع الخسارة (ساعة)", "price": 40, "duration_hours": 1},
@@ -65,6 +60,7 @@ TITLES_SHOP = [
     {"id": "title_king", "name": "👑 الملك", "price": 200},
     {"id": "title_legend", "name": "🏆 الأسطورة", "price": 500},
 ]
+
 THEMES_SHOP = [
     {"id": "theme_2", "name": "🌑 الظلال", "price": 150},
     {"id": "theme_4", "name": "💎 الكريستال", "price": 250},
