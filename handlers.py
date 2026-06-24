@@ -1,7 +1,7 @@
-import json, random, logging
+import json, random, logging, uuid
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-import db, config, keyboards, game_logic, utils
+import db, config, keyboards, game_logic, utils, state
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,6 @@ async def handle_friend_action(update: Update, context: ContextTypes.DEFAULT_TYP
         sender_id = int(data.split("_")[-1])
         db.reject_friend_request(sender_id, user.id)
         await query.answer("تم رفض الطلب")
-    # تحديث القائمة
     await friend_requests_list(update, context)
 
 async def friend_list_display(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -204,9 +203,7 @@ async def treasure_box(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reward = random.choice(config.TREASURE_REWARDS)
     typ, val = reward[0], reward[1]
     if typ == "points":
-        db.update_user(user.id, points=u["points"] + val)  # u still has old points, so careful: we deduct then add
-        # But better to do atomic: points = (u["points"] - price) + val
-        # Since we already deducted, we just add
+        db.update_user(user.id, points=u["points"] + val)
     elif typ == "gems":
         db.update_user(user.id, gems=int(u.get("gems",0)) + val)
     elif typ == "title":
@@ -288,3 +285,61 @@ async def spock_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from config import SPOCK_CHOICES
     buttons = [InlineKeyboardButton(icon, callback_data=f"spockpick_{key}") for key, icon in SPOCK_CHOICES.items()]
     await query.edit_message_text("اختر حركتك (Spock):", reply_markup=InlineKeyboardMarkup([buttons]))
+
+# ---------- 🆕 تحديات المشاهدة (Spectator Mode) ----------
+async def challenge_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /challenge @username في مجموعة"""
+    chat_id = update.effective_chat.id
+    user = update.effective_user
+    if not update.message.reply_to_message:
+        await update.message.reply_text("يجب الرد على رسالة الشخص الذي تريد تحديه.")
+        return
+    opponent = update.message.reply_to_message.from_user
+    if opponent.id == user.id:
+        await update.message.reply_text("لا يمكنك تحدي نفسك.")
+        return
+
+    challenge_id = str(uuid.uuid4())[:8]
+    async with state.spectate_lock:
+        state.spectate_challenges[challenge_id] = {
+            "players": [user.id, opponent.id],
+            "chat_id": chat_id,
+            "moves": {},
+            "status": "waiting"
+        }
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ قبول التحدي", callback_data=f"accept_challenge_{challenge_id}"),
+         InlineKeyboardButton("❌ رفض", callback_data=f"reject_challenge_{challenge_id}")]
+    ])
+    await context.bot.send_message(opponent.id, f"{user.first_name} يتحداك في مجموعة! اقبل؟", reply_markup=keyboard)
+    await update.message.reply_text(f"تم إرسال التحدي إلى {opponent.first_name}. بانتظار القبول...")
+
+async def accept_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    data = query.data
+    challenge_id = data.split("_")[-1]
+    async with state.spectate_lock:
+        challenge = state.spectate_challenges.get(challenge_id)
+        if not challenge:
+            await query.answer("انتهت صلاحية التحدي.")
+            return
+        if user.id not in challenge["players"]:
+            await query.answer("هذا التحدي ليس لك.")
+            return
+        challenge["status"] = "active"
+        p1, p2 = challenge["players"]
+        user1 = db.get_user(p1)["first_name"]
+        user2 = db.get_user(p2)["first_name"]
+        await context.bot.send_message(challenge["chat_id"], f"🔥 بدأت المباراة بين {user1} و {user2}! شاهدوا النتيجة هنا.")
+        for pid in [p1, p2]:
+            await context.bot.send_message(pid, "المباراة بدأت! اختر حركتك:", reply_markup=keyboards.choice_buttons(f"spectate_{challenge_id}"))
+    await query.edit_message_text("تم قبول التحدي. اذهب للمجموعة للمشاهدة.")
+
+async def reject_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    challenge_id = data.split("_")[-1]
+    async with state.spectate_lock:
+        state.spectate_challenges.pop(challenge_id, None)
+    await query.edit_message_text("تم رفض التحدي.")
