@@ -131,7 +131,6 @@ def tournament_choice_buttons(tour_id, match_index):
     buttons = [InlineKeyboardButton(icon, callback_data=f"pick_tournament_{tour_id}_{match_index}_{key}") for key, icon in CHOICES.items()]
     return InlineKeyboardMarkup([buttons])
 
-# 🆕 Clan Treasury
 def clan_treasury_menu(clan_name):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("💰 عرض الخزينة", callback_data=f"treasury_view_{clan_name}")],
@@ -141,7 +140,6 @@ def clan_treasury_menu(clan_name):
         [InlineKeyboardButton("🔙 رجوع", callback_data="clans")]
     ])
 
-# 🆕 World Boss
 def world_boss_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🐉 مهاجمة الزعيم", callback_data="boss_attack")],
@@ -149,8 +147,18 @@ def world_boss_menu():
         [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
     ])
 
-# 🆕 Spectator
 def spectator_accept_button(room_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👀 انضم كمشاهد", callback_data=f"spectate_join_{room_id}")]
+    ])
+
+# 🆕 لوحة تحكم الأدمن التفاعلية
+def admin_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 إحصائيات", callback_data="admin_stats")],
+        [InlineKeyboardButton("📢 رسالة شاملة", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("👤 تعديل نقاط", callback_data="admin_set_points")],
+        [InlineKeyboardButton("📺 إدارة القنوات", callback_data="admin_channels")],
+        [InlineKeyboardButton("🔄 مسح المباريات", callback_data="admin_reset")],
+        [InlineKeyboardButton("🚫 إغلاق", callback_data="delete_message")]
     ])
