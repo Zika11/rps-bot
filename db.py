@@ -1,5 +1,5 @@
 import sqlite3, json, logging, random
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import config
 
 DB = "rps_bot.db"
@@ -648,140 +648,7 @@ def get_team_players(battle_id, team):
     conn.close()
     return [r["user_id"] for r in rows]
 
-# --- Channel Voting Loop ---
-def start_channel_loop(chat_id, interval=60, ttl=30):
-    conn = get_conn()
-    conn.execute("""
-        INSERT OR REPLACE INTO channel_loop_state
-        (chat_id, active, interval_sec, ttl_sec, round_id, players_choice, predictions, round_start_time)
-        VALUES (?,1,?,?,0,'{}','{}',datetime('now'))
-    """, (chat_id, interval, ttl))
-    conn.commit()
-    conn.close()
-
-def stop_channel_loop(chat_id):
-    conn = get_conn()
-    conn.execute("DELETE FROM channel_loop_state WHERE chat_id=?", (chat_id,))
-    conn.commit()
-    conn.close()
-
-def get_channel_loop(chat_id):
-    conn = get_conn()
-    row = conn.execute("SELECT * FROM channel_loop_state WHERE chat_id=? AND active=1", (chat_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-def record_channel_vote(chat_id, user_id, move):
-    conn = get_conn()
-    state = conn.execute("SELECT * FROM channel_loop_state WHERE chat_id=?", (chat_id,)).fetchone()
-    if not state or not state["active"]:
-        conn.close()
-        return False
-    choices = json.loads(state["players_choice"])
-    choices[str(user_id)] = {
-        "move": move,
-        "round": state["round_id"]
-    }
-    conn.execute("UPDATE channel_loop_state SET players_choice=? WHERE chat_id=?", (json.dumps(choices), chat_id))
-    conn.commit()
-    conn.close()
-    return True
-
-def record_prediction(chat_id, user_id, predicted_move):
-    conn = get_conn()
-    state = conn.execute("SELECT * FROM channel_loop_state WHERE chat_id=?", (chat_id,)).fetchone()
-    if not state: return False
-    predictions = json.loads(state["predictions"] or "{}")
-    predictions[str(user_id)] = predicted_move
-    conn.execute("UPDATE channel_loop_state SET predictions=? WHERE chat_id=?", (json.dumps(predictions), chat_id))
-    conn.commit()
-    conn.close()
-    return True
-
-def get_predictions(chat_id):
-    conn = get_conn()
-    row = conn.execute("SELECT predictions FROM channel_loop_state WHERE chat_id=?", (chat_id,)).fetchone()
-    conn.close()
-    if not row: return {}
-    return json.loads(row[0] or "{}")
-
-def finish_channel_round(chat_id):
-    conn = get_conn()
-    state = conn.execute("SELECT * FROM channel_loop_state WHERE chat_id=?", (chat_id,)).fetchone()
-    if not state:
-        conn.close()
-        return None
-
-    current_round = state["round_id"]
-    choices_raw = json.loads(state["players_choice"])
-
-    valid_choices = {}
-    for uid, data in choices_raw.items():
-        if isinstance(data, dict) and data.get("round") == current_round:
-            valid_choices[uid] = data["move"]
-
-    if not valid_choices:
-        conn.close()
-        return {"players": {}, "counts": {}, "winners": [], "draw": False, "winning_moves": []}
-
-    from collections import Counter
-    moves = list(valid_choices.values())
-    counts = dict(Counter(moves))
-    sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
-
-    draw = False
-    winning_moves = []
-    if len(sorted_counts) >= 2 and sorted_counts[0][1] == sorted_counts[1][1]:
-        draw = True
-        top_count = sorted_counts[0][1]
-        winning_moves = [move for move, cnt in sorted_counts if cnt == top_count]
-    else:
-        winning_moves = [sorted_counts[0][0]]
-
-    winners = [uid for uid, mv in valid_choices.items() if mv in winning_moves]
-
-    new_round = current_round + 1
-    conn.execute("UPDATE channel_loop_state SET round_id=?, players_choice='{}', predictions='{}', round_start_time=datetime('now') WHERE chat_id=?",
-                 (new_round, chat_id))
-    conn.commit()
-    conn.close()
-
-    return {
-        "players": valid_choices,
-        "counts": counts,
-        "winners": winners,
-        "winning_moves": winning_moves,
-        "draw": draw
-    }
-
-# --- Streak & Points ---
-def update_user_streak(chat_id, user_id, is_win):
-    conn = get_conn()
-    now = datetime.now().isoformat()
-    cur = conn.execute("SELECT streak FROM channel_user_streaks WHERE chat_id=? AND user_id=?", (chat_id, user_id))
-    row = cur.fetchone()
-    if not row:
-        streak = 1 if is_win else 0
-        conn.execute("INSERT INTO channel_user_streaks (chat_id, user_id, streak, last_vote_time) VALUES (?,?,?,?)",
-                     (chat_id, user_id, streak, now))
-    else:
-        if is_win:
-            streak = row["streak"] + 1
-        else:
-            streak = 0
-        conn.execute("UPDATE channel_user_streaks SET streak=?, last_vote_time=? WHERE chat_id=? AND user_id=?", 
-                     (streak, now, chat_id, user_id))
-    conn.commit()
-    conn.close()
-    return streak
-
-def add_channel_points(chat_id, user_id, amount):
-    conn = get_conn()
-    conn.execute("INSERT OR IGNORE INTO channel_user_points (chat_id, user_id, points) VALUES (?,?,0)", (chat_id, user_id))
-    conn.execute("UPDATE channel_user_points SET points = points + ? WHERE chat_id=? AND user_id=?", (amount, chat_id, user_id))
-    conn.commit()
-    conn.close()
-
+# --- دوال التصنيف ---
 def get_channel_leaderboard(chat_id, limit=10):
     conn = get_conn()
     rows = conn.execute("""
@@ -792,65 +659,15 @@ def get_channel_leaderboard(chat_id, limit=10):
     conn.close()
     return [dict(r) for r in rows]
 
-# --- Batch Rewards (Performance) ---
-def batch_process_channel_rewards_with_streak(chat_id, players_rewards, streak_bonus):
-    if not players_rewards:
-        return
+def get_weekly_channel_leaderboard(chat_id, limit=10):
     conn = get_conn()
-    now = datetime.now().isoformat()
-    user_ids = [p["user_id"] for p in players_rewards]
-
-    placeholders = ",".join("?" * len(user_ids))
-    users = conn.execute(
-        f"SELECT user_id, points, clan FROM users WHERE user_id IN ({placeholders})",
-        user_ids
-    ).fetchall()
-    user_points = {u["user_id"]: u["points"] for u in users}
-    user_clan = {u["user_id"]: u["clan"] for u in users}
-
-    streaks = conn.execute(
-        f"SELECT user_id, streak FROM channel_user_streaks WHERE chat_id=? AND user_id IN ({placeholders})",
-        [chat_id] + user_ids
-    ).fetchall()
-    streak_data = {s["user_id"]: s["streak"] for s in streaks}
-
-    new_streaks = []
-    user_updates = []
-    channel_points_updates = []
-
-    for p in players_rewards:
-        uid = p["user_id"]
-        reward = p["reward"]
-        is_winner = p["is_winner"]
-
-        current_streak = streak_data.get(uid, 0)
-        if is_winner:
-            new_streak = current_streak + 1
-            if new_streak > 1:
-                reward += streak_bonus * new_streak
-        else:
-            new_streak = 0
-
-        new_streaks.append((chat_id, uid, new_streak, now))
-
-        current_points = user_points.get(uid, 0)
-        user_updates.append((current_points + reward, uid))
-
-        channel_points_updates.append((chat_id, uid, reward))
-
-    conn.executemany("UPDATE users SET points = ? WHERE user_id = ?", user_updates)
-
-    conn.executemany("""
-        INSERT INTO channel_user_streaks (chat_id, user_id, streak, last_vote_time) 
-        VALUES (?,?,?,?)
-        ON CONFLICT(chat_id, user_id) DO UPDATE SET streak=?, last_vote_time=?
-    """, [(c, u, s, t, s, t) for (c, u, s, t) in new_streaks])
-
-    conn.executemany("""
-        INSERT INTO channel_user_points (chat_id, user_id, points) 
-        VALUES (?,?,?)
-        ON CONFLICT(chat_id, user_id) DO UPDATE SET points = points + ?
-    """, [(c, u, r, r) for (c, u, r) in channel_points_updates])
-
-    conn.commit()
+    week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+    rows = conn.execute("""
+        SELECT u.first_name, SUM(c.points) as total_points
+        FROM channel_user_points c JOIN users u ON c.user_id = u.user_id
+        WHERE c.chat_id = ? AND c.last_updated >= ?
+        GROUP BY c.user_id
+        ORDER BY total_points DESC LIMIT ?
+    """, (chat_id, week_ago, limit)).fetchall()
     conn.close()
+    return [{"name": r["first_name"], "points": r["total_points"]} for r in rows]
