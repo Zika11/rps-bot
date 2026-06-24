@@ -418,6 +418,12 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # 🆕 إضافة الفهارس لتحسين الأداء
+    c.execute("CREATE INDEX IF NOT EXISTS idx_channel_votes_chat_round ON channel_votes(chat_id, round_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_channel_loop_chat ON channel_loop_state(chat_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_channel_user_points_chat ON channel_user_points(chat_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_channel_user_streaks_chat ON channel_user_streaks(chat_id)")
+
     # إدراج بيانات افتراضية
     c.execute("SELECT COUNT(*) FROM tasks")
     if c.fetchone()[0] == 0:
