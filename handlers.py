@@ -1,334 +1,328 @@
-import json, random, logging, asyncio
-from datetime import datetime, timedelta
+import json, logging, asyncio, random
+from datetime import datetime, date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
-import db, config, state, keyboards, game_logic, utils
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+import models, db, config, state, keyboards, game_logic, utils, handlers
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ---------- البطولات ----------
-async def tournament_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = query.from_user
-    await query.answer()
-    active_tour = None
-    # البحث عن بطولة مفتوحة
-    # سننشئ واحدة إن لم تكن موجودة كمثال
-    tour_id = context.user_data.get("tour_created")
-    if not tour_id:
-        tour_id = db.create_tournament("بطولة الأبطال")
-        context.user_data["tour_created"] = tour_id
-    tour = db.get_tournament(tour_id)
-    players = json.loads(tour["players"] or "[]")
-    text = f"🏆 {tour['name']}\nالمشاركون: {len(players)}/8"
-    if user.id in players:
-        text += "\n✅ أنت مسجل"
-    else:
-        text += "\nاضغط للانضمام"
-    await query.edit_message_text(text, reply_markup=keyboards.tournament_keyboard(tour_id))
+# تهيئة قاعدة البيانات
+models.init_db()
 
-async def join_tournament_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = query.from_user
-    await query.answer()
-    tour_id = int(query.data.split("_")[-1])
-    success = db.join_tournament(tour_id, user.id)
-    if success:
-        tour = db.get_tournament(tour_id)
-        players = json.loads(tour["players"] or "[]")
-        if len(players) == 8:
-            # بدء البطولة تلقائياً
-            db.update_tournament(tour_id, status="started", current_round=1,
-                                 bracket=json.dumps(players))  # تبسيط
-            await context.bot.send_message(user.id, "بدأت البطولة! سيتم إعلامك بالخصم.")
-            # في الواقع تحتاج إدارة معقدة، سنبسطها هنا.
-        await query.edit_message_text("تم تسجيلك في البطولة ✅")
-    else:
-        await query.edit_message_text("البطولة ممتلئة أو حدث خطأ.")
-
-# ---------- الأصدقاء ----------
-async def friends_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.edit_message_text("قائمة الأصدقاء:", reply_markup=keyboards.friends_menu())
-
-async def add_friend_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("أرسل معرف المستخدم (@username) الذي تريد إضافته:")
-    context.user_data["awaiting_friend_username"] = True
-
-async def process_friend_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------- أوامر أساسية ----------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    username = update.message.text.strip().lstrip("@")
-    target = db.get_user_by_username(username)
-    if not target:
-        await update.message.reply_text("لم يتم العثور على مستخدم بهذا المعرف.")
-        return
-    if target["user_id"] == user.id:
-        await update.message.reply_text("لا يمكنك إضافة نفسك.")
-        return
-    db.send_friend_request(user.id, target["user_id"])
-    await update.message.reply_text("تم إرسال طلب الصداقة.")
-    context.user_data["awaiting_friend_username"] = False
+    u = db.get_user(user.id)
+    if not u:
+        db.create_user(user.id, user.username, user.first_name, "ar")
+    else:
+        # تحديث آخر دخول و login streak
+        today = date.today().isoformat()
+        last_login = u.get("last_login")
+        streak = int(u.get("login_streak", 0))
+        if last_login:
+            last_date = date.fromisoformat(last_login[:10])
+            if (date.today() - last_date).days == 1:
+                streak += 1
+            elif (date.today() - last_date).days > 1:
+                streak = 1
+        else:
+            streak = 1
+        days_registered = (date.today() - date.fromisoformat(u["registered_date"][:10])).days if u.get("registered_date") else 0
+        db.update_user(user.id, last_login=datetime.now().isoformat(), login_streak=streak, days_since_register=days_registered)
+        await game_logic.check_achievements(user.id, context)
+        # مهمة تسجيل الدخول
+        await game_logic.check_and_complete_task(user.id, "task_1", context, 1)  # مثال
+    text = f"أهلاً {user.first_name}! اختر من القائمة:"
+    await update.message.reply_text(text, reply_markup=keyboards.main_menu())
 
-async def friend_requests_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = query.from_user
-    requests = db.get_pending_requests(user.id)
-    if not requests:
-        await query.edit_message_text("لا توجد طلبات صداقة.")
-        return
-    buttons = []
-    for sender_id in requests:
-        sender = db.get_user(sender_id)
-        name = sender["first_name"] if sender else str(sender_id)
-        buttons.append([InlineKeyboardButton(f"قبول من {name}", callback_data=f"accept_friend_{sender_id}"),
-                        InlineKeyboardButton("رفض", callback_data=f"reject_friend_{sender_id}")])
-    buttons.append([InlineKeyboardButton("رجوع", callback_data="friends")])
-    await query.edit_message_text("طلبات الصداقة:", reply_markup=InlineKeyboardMarkup(buttons))
-
-async def handle_friend_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     data = query.data
-    if data.startswith("accept_friend_"):
-        sender_id = int(data.split("_")[-1])
-        db.accept_friend_request(sender_id, user.id)
-        await query.answer("تم قبول الصداقة")
-    elif data.startswith("reject_friend_"):
-        sender_id = int(data.split("_")[-1])
-        db.reject_friend_request(sender_id, user.id)
-        await query.answer("تم رفض الطلب")
-    # تحديث القائمة
-    await friend_requests_list(update, context)
-
-async def friend_list_display(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = query.from_user
-    friends = db.get_friends(user.id)
-    if not friends:
-        await query.edit_message_text("لا يوجد أصدقاء بعد.")
-        return
-    text = "👥 أصدقائي:\n"
-    for fid in friends:
-        f = db.get_user(fid)
-        name = f["first_name"] if f else str(fid)
-        text += f"- {name}\n"
-    await query.edit_message_text(text, reply_markup=keyboards.back_button())
-
-# ---------- المتجر (بطاقات/ألقاب/ثيمات/صندوق) ----------
-async def shop_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.edit_message_text("المتجر:", reply_markup=keyboards.shop_categories())
-
-async def shop_cards(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    items = db.get_shop_items()
-    text = "🃏 بطاقات المتجر:\n"
-    keyboard = []
-    for item in items:
-        text += f"{item['name']} - {item['price']} نقطة\n"
-        keyboard.append([InlineKeyboardButton(f"شراء {item['name']}", callback_data=f"buy_{item['item_id']}")])
-    keyboard.append([InlineKeyboardButton("رجوع", callback_data="shop")])
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def buy_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = query.from_user
-    item_id = query.data.split("_", 1)[1]
-    u = db.get_user(user.id)
-    item = next((i for i in db.get_shop_items() if i["item_id"] == item_id), None)
-    if not item:
-        await query.answer("عنصر غير موجود")
-        return
-    if u["points"] < item["price"]:
-        await query.answer("نقاط غير كافية")
-        return
-    # شراء
-    db.update_user(user.id, points=u["points"] - item["price"])
-    owned = (u.get("shop_items") or "").split(",")
-    owned = [o for o in owned if o]
-    owned.append(item_id)
-    db.update_user(user.id, shop_items=",".join(owned))
-    await query.answer("تم الشراء!")
-    # تفعيل البوستر فوراً أو تخزينه (حسب النوع)
-    if item["type"] == "booster":
-        # يمكنك إضافة منطق boosters هنا
-        pass
-
-async def shop_titles(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    # قراءة من جدول titles_shop
-    import db as db_module
-    conn = db_module.get_conn()
-    titles = conn.execute("SELECT * FROM titles_shop").fetchall()
-    conn.close()
-    text = "🏷️ الألقاب المتاحة:\n"
-    keyboard = []
-    for t in titles:
-        text += f"{t['name']} - {t['price']} نقطة\n"
-        keyboard.append([InlineKeyboardButton(f"شراء {t['name']}", callback_data=f"buy_title_{t['title_id']}")])
-    keyboard.append([InlineKeyboardButton("رجوع", callback_data="shop")])
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def buy_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = query.from_user
-    title_id = query.data.split("_", 2)[2]  # "buy_title_xxx"
-    u = db.get_user(user.id)
-    # التحقق من السعر
-    conn = db.get_conn()
-    row = conn.execute("SELECT * FROM titles_shop WHERE title_id=?", (title_id,)).fetchone()
-    conn.close()
-    if not row:
-        await query.answer("لقب غير موجود")
-        return
-    if u["points"] < row["price"]:
-        await query.answer("نقاط غير كافية")
-        return
-    db.update_user(user.id, points=u["points"] - row["price"], title=row["name"])
-    await query.answer("تم شراء اللقب وتثبيته!")
-
-async def shop_themes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    conn = db.get_conn()
-    themes = conn.execute("SELECT * FROM themes_shop").fetchall()
-    conn.close()
-    text = "🎨 الثيمات المتاحة:\n"
-    keyboard = []
-    for th in themes:
-        text += f"{th['name']} - {th['price']} نقطة\n"
-        keyboard.append([InlineKeyboardButton(f"شراء {th['name']}", callback_data=f"buy_theme_{th['theme_id']}")])
-    keyboard.append([InlineKeyboardButton("رجوع", callback_data="shop")])
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def buy_theme(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = query.from_user
-    theme_id = query.data.split("_", 2)[2]
-    u = db.get_user(user.id)
-    conn = db.get_conn()
-    row = conn.execute("SELECT * FROM themes_shop WHERE theme_id=?", (theme_id,)).fetchone()
-    conn.close()
-    if not row: return
-    if u["points"] < row["price"]:
-        await query.answer("نقاط غير كافية")
-        return
-    db.update_user(user.id, points=u["points"] - row["price"], theme=theme_id)
-    await query.answer("تم شراء الثيم!")
-
-async def treasure_box(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = query.from_user
-    u = db.get_user(user.id)
-    price = config.TREASURE_BOX_PRICE
-    if u["points"] < price:
-        await query.answer("تحتاج 100 نقطة")
-        return
-    db.update_user(user.id, points=u["points"] - price)
-    reward = random.choice(config.TREASURE_REWARDS)
-    reward_type, value = reward[0], reward[1]
-    if reward_type == "points":
-        db.update_user(user.id, points=int(u.get("points",0)) + value)  # بعد الخصم أضف النقاط
-        await query.answer(f"ربحت {value} نقطة!")
-    elif reward_type == "gems":
-        db.update_user(user.id, gems=int(u.get("gems",0)) + value)
-        await query.answer(f"ربحت {value} جوهرة!")
-    elif reward_type == "title":
-        db.update_user(user.id, title=value)
-        await query.answer(f"حصلت على لقب: {value}")
-    elif reward_type == "theme":
-        db.update_user(user.id, theme=value)
-        await query.answer(f"حصلت على ثيم جديد!")
-    elif reward_type == "booster":
-        # إضافة للمخزون
-        owned = u.get("shop_items","") + f",{value}" if u.get("shop_items") else value
-        db.update_user(user.id, shop_items=owned)
-        await query.answer("حصلت على بطاقة تعزيز!")
-
-# ---------- العشائر ----------
-async def clans_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.edit_message_text("العشائر:", reply_markup=keyboards.clans_menu())
-
-async def clan_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
     await query.answer()
-    await query.edit_message_text("أرسل اسم العشيرة الجديدة:")
-    context.user_data["awaiting_clan_name"] = True
 
-async def process_clan_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    name = update.message.text.strip()
-    if db.get_clan(name):
-        await update.message.reply_text("الاسم موجود مسبقاً.")
+    # القائمة الرئيسية
+    if data == "back_main":
+        await query.edit_message_text("القائمة الرئيسية:", reply_markup=keyboards.main_menu())
+    elif data == "game":
+        await query.edit_message_text("اختر نمط اللعب:", reply_markup=keyboards.game_mode_menu())
+    elif data == "friends":
+        await handlers.friends_menu_handler(update, context)
+    elif data == "shop":
+        await handlers.shop_main(update, context)
+    elif data == "clans":
+        await handlers.clans_menu_handler(update, context)
+    elif data == "tasks":
+        # عرض المهام
+        tasks = db.get_tasks()
+        u = db.get_user(user.id)
+        progress = json.loads(u.get("tasks_progress", "{}") or "{}").get("tasks", {})
+        text = "📋 المهام:\n"
+        for t in tasks:
+            done = progress.get(f"{t['task_id']}_done", False)
+            status = "✅" if done else "⭕"
+            text += f"{status} {t['description']} (+{t['points_reward']} نقطة)\n"
+        await query.edit_message_text(text, reply_markup=keyboards.back_button())
+    elif data == "achievements":
+        all_ach = db.get_achievements()
+        u = db.get_user(user.id)
+        earned = [a for a in (u.get("achievements") or "").split(",") if a]
+        text = "🏅 الإنجازات:\n"
+        for a in all_ach:
+            icon = a["icon"] if a["ach_id"] in earned else "🔒"
+            text += f"{icon} {a['name']} - {a['description']}\n"
+        await query.edit_message_text(text, reply_markup=keyboards.back_button())
+    elif data == "rating":
+        top = db.get_top_ratings(10)
+        text = "📊 أفضل 10 لاعبين:\n"
+        for i, r in enumerate(top, 1):
+            name = r["first_name"] or str(r["user_id"])
+            text += f"{i}. {name} - {r['rating']}\n"
+        await query.edit_message_text(text, reply_markup=keyboards.back_button())
+    elif data == "language":
+        # تغيير اللغة
+        u = db.get_user(user.id)
+        new_lang = "en" if u["language"] == "ar" else "ar"
+        db.update_user(user.id, language=new_lang)
+        await query.edit_message_text("تم تغيير اللغة", reply_markup=keyboards.main_menu(new_lang))
+
+    # أوضاع اللعب
+    elif data == "solo":
+        await start_solo_game(update, context)
+    elif data == "random":
+        await random_matchmaking(update, context)
+    elif data == "friend":
+        await query.edit_message_text("أرسل معرف الصديق (@username) لتحديه:")
+        context.user_data["awaiting_friend_challenge"] = True
+    elif data == "channel":
+        await handlers.channel_challenge(update, context)
+    elif data == "spock":
+        await handlers.spock_mode(update, context)
+    elif data == "story":
+        await handlers.story_mode(update, context)
+
+    # اختيار الحركات
+    elif data.startswith("pick_"):
+        _, move, game_type = data.split("_")
+        await process_move(update, context, move, game_type)
+    elif data.startswith("spockpick_"):
+        move = data.split("_", 1)[1]
+        await process_spock_move(update, context, move)
+
+    # الأصدقاء
+    elif data == "add_friend":
+        await handlers.add_friend_start(update, context)
+    elif data == "friend_requests":
+        await handlers.friend_requests_list(update, context)
+    elif data == "friend_list":
+        await handlers.friend_list_display(update, context)
+    elif data.startswith("accept_friend_") or data.startswith("reject_friend_"):
+        await handlers.handle_friend_action(update, context)
+
+    # المتجر
+    elif data == "shop_cards":
+        await handlers.shop_cards(update, context)
+    elif data.startswith("buy_") and not data.startswith("buy_title") and not data.startswith("buy_theme"):
+        await handlers.buy_item(update, context)
+    elif data == "shop_titles":
+        await handlers.shop_titles(update, context)
+    elif data.startswith("buy_title_"):
+        await handlers.buy_title(update, context)
+    elif data == "shop_themes":
+        await handlers.shop_themes(update, context)
+    elif data.startswith("buy_theme_"):
+        await handlers.buy_theme(update, context)
+    elif data == "treasure_box":
+        await handlers.treasure_box(update, context)
+
+    # العشائر
+    elif data == "clan_create":
+        await handlers.clan_create(update, context)
+    elif data == "clan_join":
+        await handlers.clan_join(update, context)
+    elif data == "clan_ranking":
+        await handlers.clan_ranking(update, context)
+
+    # البطولات
+    elif data == "tournament":
+        await handlers.tournament_menu(update, context)
+    elif data.startswith("join_tournament_"):
+        await handlers.join_tournament_handler(update, context)
+
+# ---------- دوال اللعب ----------
+async def start_solo_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    # إنشاء لعبة فردية
+    state.active_games[user.id] = {"type": "solo"}
+    await query.edit_message_text("اختر حركتك:", reply_markup=keyboards.choice_buttons("solo"))
+
+async def random_matchmaking(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    async with state.active_locks:
+        # البحث عن لاعب آخر ينتظر
+        if state.pending_matches:
+            opponent_id = state.pending_matches.pop(0)
+            # بدء لعبة بينهما
+            state.active_games[user.id] = {"type": "random", "opponent": opponent_id}
+            state.active_games[opponent_id] = {"type": "random", "opponent": user.id}
+            await query.edit_message_text("تم العثور على خصم! اختر حركتك:", reply_markup=keyboards.choice_buttons("random"))
+            await context.bot.send_message(opponent_id, "تم العثور على خصم! اختر حركتك:", reply_markup=keyboards.choice_buttons("random"))
+        else:
+            state.pending_matches.append(user.id)
+            await query.edit_message_text("بانتظار لاعب آخر...")
+
+async def process_move(update: Update, context: ContextTypes.DEFAULT_TYPE, move, game_type):
+    query = update.callback_query
+    user = query.from_user
+    game = state.active_games.get(user.id)
+    if not game:
+        await query.edit_message_text("انتهت اللعبة.")
         return
-    success = db.create_clan(name, user.id)
-    if success:
-        db.update_user(user.id, clan=name)
-        await update.message.reply_text(f"تم إنشاء العشيرة {name}!")
+
+    if game_type == "solo":
+        bot_move = utils.smart_bot_choice(user.id)
+        result = game_logic.get_result(move, bot_move)
+        await finish_game(update, context, user.id, move, bot_move, result)
+    elif game_type == "random":
+        opp_id = game.get("opponent")
+        if not opp_id:
+            await query.edit_message_text("خطأ.")
+            return
+        # تخزين حركة المستخدم
+        game["move"] = move
+        opp_game = state.active_games.get(opp_id)
+        if opp_game and "move" in opp_game:
+            # كلا اللاعبين اختاروا
+            opp_move = opp_game["move"]
+            result_p1 = game_logic.get_result(move, opp_move)
+            result_p2 = game_logic.get_result(opp_move, move)
+            # إرسال النتائج
+            await finish_game(update, context, user.id, move, opp_move, result_p1)
+            await context.bot.send_message(opp_id, f"نتيجة المباراة: {result_p2}")
+            # تنظيف
+            del state.active_games[user.id]
+            del state.active_games[opp_id]
+        else:
+            await query.edit_message_text("تم تسجيل حركتك، بانتظار الخصم...")
+
+async def process_spock_move(update: Update, context: ContextTypes.DEFAULT_TYPE, move):
+    query = update.callback_query
+    user = query.from_user
+    # بوت عشوائي في Spock
+    from config import SPOCK_WIN_MAP, SPOCK_CHOICES
+    bot_move = random.choice(list(SPOCK_CHOICES.keys()))
+    if move == bot_move:
+        result = "draw"
+    elif bot_move in SPOCK_WIN_MAP[move]:
+        result = "win"
     else:
-        await update.message.reply_text("حدث خطأ.")
-    context.user_data["awaiting_clan_name"] = False
+        result = "loss"
+    await finish_game(update, context, user.id, move, bot_move, result, spock=True)
+    # إرسال رسالة توضح النتيجة مع الأيقونات
+    u = db.get_user(user.id)
+    theme_icons = utils.get_choices_for_user(user.id)
+    user_icon = theme_icons.get(move, SPOCK_CHOICES.get(move, move))
+    bot_icon = theme_icons.get(bot_move, SPOCK_CHOICES.get(bot_move, bot_move))
+    await query.edit_message_text(f"أنت: {user_icon} vs بوت: {bot_icon}\nالنتيجة: {result}")
 
-async def clan_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def finish_game(update, context, user_id, user_move, opp_move, result, spock=False):
     query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("أرسل اسم العشيرة التي تريد الانضمام إليها:")
-    context.user_data["awaiting_join_clan"] = True
+    u = db.get_user(user_id)
+    theme_icons = utils.get_choices_for_user(user_id)
+    user_icon = theme_icons.get(user_move, user_move)
+    opp_icon = theme_icons.get(opp_move, opp_move)
+    text = f"أنت: {user_icon} vs الخصم: {opp_icon}\nالنتيجة: {result}"
+    await query.edit_message_text(text)
 
-async def process_join_clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # تحديث الإحصائيات
+    points_change = 0
+    if result == "win":
+        db.update_user(user_id, wins=int(u["wins"])+1, win_streak=int(u.get("win_streak",0))+1,
+                       streak_count=int(u.get("streak_count",0))+1)
+        points_change = 10
+    elif result == "loss":
+        db.update_user(user_id, losses=int(u["losses"])+1, win_streak=0,
+                       streak_count=max(0, int(u.get("streak_count",0))-1))
+    elif result == "draw":
+        db.update_user(user_id, draws=int(u["draws"])+1)
+        points_change = 5
+
+    # تحديث استخدام الصخرة
+    if user_move == "rock":
+        db.update_user(user_id, rock_used=int(u.get("rock_used",0))+1)
+
+    # إضافة نقاط وجواهر
+    db.update_user(user_id, points=int(u["points"])+points_change, gems=int(u.get("gems",0))+1)
+
+    # تحديث التصنيف
+    rating = db.get_user_rating(user_id) or config.DEFAULT_RATING
+    # ELO بسيط
+    opp_rating = config.DEFAULT_RATING
+    if "opponent" in state.active_games.get(user_id, {}):
+        opp = state.active_games[user_id]["opponent"]
+        opp_rating = db.get_user_rating(opp) or config.DEFAULT_RATING
+    expected = 1 / (1 + 10**((opp_rating - rating)/400))
+    score = 1 if result == "win" else 0.5 if result == "draw" else 0
+    new_rating = rating + config.RATING_K * (score - expected)
+    db.update_rating(user_id, int(new_rating))
+
+    # تحديث المهام والإنجازات
+    await game_logic.check_and_complete_task(user_id, "task_5", context, 1)  # مثال عام
+    await game_logic.check_achievements(user_id, context)
+    game_logic.add_clan_points(user_id, 2)
+
+    utils.update_user_moves(user_id, user_move)
+
+# ---------- معالج النصوص (أسماء المستخدمين، تحديات..) ----------
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    clan_name = update.message.text.strip()
-    clan = db.get_clan(clan_name)
-    if not clan:
-        await update.message.reply_text("العشيرة غير موجودة.")
-        return
-    # الانضمام مباشرة بدون موافقة (للتبسيط)
-    db.update_user(user.id, clan=clan_name)
-    await update.message.reply_text(f"انضممت إلى {clan_name}!")
-    context.user_data["awaiting_join_clan"] = False
+    msg = update.message.text
+    if context.user_data.get("awaiting_friend_username"):
+        await handlers.process_friend_username(update, context)
+    elif context.user_data.get("awaiting_clan_name"):
+        await handlers.process_clan_name(update, context)
+    elif context.user_data.get("awaiting_join_clan"):
+        await handlers.process_join_clan(update, context)
+    elif context.user_data.get("awaiting_friend_challenge"):
+        username = msg.strip().lstrip("@")
+        target = db.get_user_by_username(username)
+        if not target:
+            await update.message.reply_text("المستخدم غير موجود.")
+            return
+        # بدء تحدي صديق (يمكن تخزينه في active_games)
+        await update.message.reply_text(f"تحدي صديق قيد التطوير (سيتم إعلام {target['first_name']}).")
+        context.user_data["awaiting_friend_challenge"] = False
 
-async def clan_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    clans = db.get_all_clans()
-    if not clans:
-        await query.edit_message_text("لا توجد عشائر بعد.")
-        return
-    text = "🏆 ترتيب العشائر:\n"
-    for i, c in enumerate(clans[:10], 1):
-        text += f"{i}. {c['name']} - {c['points']} نقطة\n"
-    await query.edit_message_text(text, reply_markup=keyboards.back_button())
-
-# ---------- تحديات القنوات ----------
-async def channel_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("تحدي القنوات: أرسل هذه الرسالة في قناة/مجموعة واطلب من شخص الرد بـ /accept")
-    context.user_data["channel_challenge_active"] = True
-
-# ---------- وضع القصة و Spock (معالجة مبسطة) ----------
-async def story_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("وضع القصة قيد التطوير...", reply_markup=keyboards.back_button())
-
-async def spock_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    # عرض أزرار خيارات Spock (سنستخدم نفس أزرار الاختيار لكن مع spock)
-    from config import SPOCK_CHOICES
-    buttons = []
-    for key, icon in SPOCK_CHOICES.items():
-        buttons.append(InlineKeyboardButton(icon, callback_data=f"spockpick_{key}"))
-    await query.edit_message_text("اختر حركتك (Spock):", reply_markup=InlineKeyboardMarkup([buttons]))
-
-# ---------- حرب العشائر (مؤسس فقط) ----------
-async def clan_war_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # التحقق من المؤسس
+# ---------- أمر البانلات (للمؤسس) ----------
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not utils.is_founder(update.effective_user.id):
-        await update.callback_query.answer("للمؤسس فقط")
+        await update.message.reply_text("غير مسموح")
         return
-    # بدء حرب بين عشيرتين عشوائيتين (للتبسيط)
-    # تنفيذ حرب وهمية
-    await update.callback_query.edit_message_text("حرب العشائر تبدأ قريباً!")
+    await update.message.reply_text("لوحة التحكم:\n/start_war لبدء حرب عشائر")
+
+async def start_war_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not utils.is_founder(update.effective_user.id):
+        return
+    # بدء حرب وهمية
+    await update.message.reply_text("بدأت حرب العشائر!")
+    # كود إنشاء حرب في db...
+
+# ---------- تشغيل البوت ----------
+def main():
+    app = Application.builder().token(config.BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler("start_war", start_war_command))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+
+    logger.info("البوت يعمل...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
