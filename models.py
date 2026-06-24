@@ -168,6 +168,24 @@ def init_db():
         )
     """)
 
+    # جداول إدارة المباريات الجديدة
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS pending_matches (
+            user_id INTEGER PRIMARY KEY
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS active_games (
+            game_id TEXT PRIMARY KEY,
+            player1 INTEGER,
+            player2 INTEGER,
+            type TEXT,
+            status TEXT,
+            data TEXT DEFAULT '{}',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     # إدراج بيانات افتراضية إذا كانت الجداول فارغة
     c.execute("SELECT COUNT(*) FROM tasks")
     if c.fetchone()[0] == 0:
