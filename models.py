@@ -44,14 +44,130 @@ def init_db():
         )
     """)
 
-    # ... (باقي الجداول الأساسية: clans, tasks, shop, ratings, tournaments, achievements, friends, friend_requests, group_challenges, titles_shop, themes_shop, events, clan_wars)
-    # هي نفسها بدون تغيير، سأختصرها هنا لتجنب تكرار الطول. في الملف الكامل ستجدها كاملة كما في النسخ السابقة.
-    # ...
-    # لكن تأكد من وجود جدول tournaments القديم (tournaments) وهذا لنغيره ليدعم bracket الجديد. سنضيف جدول tournaments جديد ونترك القديم إن أردت.
-    # ولكن لسهولة التطوير، سنستخدم جدول tournaments الموجود مع حقل bracket كمصفوفة JSON.
-    # لذا الجداول الأصلية تبقى كما هي.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS clans (
+            clan_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE,
+            leader_id INTEGER,
+            points INTEGER DEFAULT 0,
+            invite_link TEXT,
+            created_at TEXT
+        )
+    """)
 
-    # جداول إدارة المباريات
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            task_id TEXT PRIMARY KEY,
+            description TEXT,
+            points_reward INTEGER
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS shop (
+            item_id TEXT PRIMARY KEY,
+            name TEXT,
+            price INTEGER,
+            type TEXT
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS ratings (
+            user_id INTEGER PRIMARY KEY,
+            rating INTEGER DEFAULT 1000
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS tournaments (
+            tour_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            status TEXT DEFAULT 'open',
+            current_round INTEGER DEFAULT 0,
+            players TEXT,
+            bracket TEXT,
+            winner_id INTEGER
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS achievements (
+            ach_id TEXT PRIMARY KEY,
+            name TEXT,
+            description TEXT,
+            icon TEXT,
+            condition_field TEXT,
+            condition_value INTEGER
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS friends (
+            user_id INTEGER,
+            friend_id INTEGER,
+            PRIMARY KEY (user_id, friend_id)
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS friend_requests (
+            sender_id INTEGER,
+            receiver_id INTEGER,
+            status TEXT DEFAULT 'pending',
+            PRIMARY KEY (sender_id, receiver_id)
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS group_challenges (
+            challenge_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            creator_id INTEGER,
+            opponent_id INTEGER,
+            status TEXT DEFAULT 'open'
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS titles_shop (
+            title_id TEXT PRIMARY KEY,
+            name TEXT,
+            price INTEGER
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS themes_shop (
+            theme_id TEXT PRIMARY KEY,
+            name TEXT,
+            price INTEGER
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            start_date TEXT,
+            end_date TEXT,
+            reward TEXT
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS clan_wars (
+            war_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            clan1 TEXT,
+            clan2 TEXT,
+            points1 INTEGER DEFAULT 0,
+            points2 INTEGER DEFAULT 0,
+            start_time TEXT,
+            end_time TEXT,
+            active INTEGER DEFAULT 1
+        )
+    """)
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS pending_matches (
             user_id INTEGER PRIMARY KEY
@@ -69,7 +185,6 @@ def init_db():
         )
     """)
 
-    # جداول الميزات السابقة
     c.execute("""
         CREATE TABLE IF NOT EXISTS daily_claims (
             user_id INTEGER PRIMARY KEY,
@@ -87,7 +202,6 @@ def init_db():
         )
     """)
 
-    # 🆕 جداول الإطارات والسوق
     c.execute("""
         CREATE TABLE IF NOT EXISTS user_frames (
             user_id INTEGER PRIMARY KEY,
@@ -107,9 +221,127 @@ def init_db():
         )
     """)
 
-    # إدراج بيانات افتراضية (نفس السابق)
-    # ... (tasks, achievements, shop, titles_shop, themes_shop)
-    # اختصار
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS clan_treasury (
+            clan_name TEXT PRIMARY KEY,
+            points INTEGER DEFAULT 0,
+            gems INTEGER DEFAULT 0,
+            upgrades TEXT DEFAULT '{}'
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS clan_war_season (
+            season_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            start_date TEXT,
+            end_date TEXT,
+            active INTEGER DEFAULT 1
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS clan_war_scores (
+            clan_name TEXT,
+            season_id INTEGER,
+            region TEXT,
+            score INTEGER DEFAULT 0,
+            PRIMARY KEY (clan_name, season_id, region)
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS spectator_rooms (
+            room_id TEXT PRIMARY KEY,
+            player1 INTEGER,
+            player2 INTEGER,
+            chat_id INTEGER,
+            status TEXT DEFAULT 'waiting',
+            moves TEXT DEFAULT '{}',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS season_info (
+            season_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            start_date TEXT,
+            end_date TEXT,
+            active INTEGER DEFAULT 1
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS season_rankings (
+            user_id INTEGER,
+            season_id INTEGER,
+            rating INTEGER,
+            wins INTEGER DEFAULT 0,
+            losses INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, season_id)
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS world_boss (
+            boss_id INTEGER PRIMARY KEY DEFAULT 1,
+            name TEXT DEFAULT 'تنين الظلام',
+            current_hp INTEGER DEFAULT 1000,
+            max_hp INTEGER DEFAULT 1000,
+            status TEXT DEFAULT 'active',
+            spawned_at TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS boss_damage (
+            user_id INTEGER,
+            boss_id INTEGER,
+            damage INTEGER DEFAULT 0,
+            attacks INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, boss_id)
+        )
+    """)
+
+    # إدراج بيانات افتراضية
+    c.execute("SELECT COUNT(*) FROM tasks")
+    if c.fetchone()[0] == 0:
+        tasks = [
+            ("task_1", "العب 5 مباريات فردية", 30),
+            ("task_2", "اربح 3 مباريات عشوائية", 20),
+            ("task_3", "انضم لعشيرة", 10),
+            ("task_4", "اربح بطولة", 50),
+            ("task_5", "اجمع 10 انتصارات", 40)
+        ]
+        c.executemany("INSERT INTO tasks VALUES (?,?,?)", tasks)
+
+    c.execute("SELECT COUNT(*) FROM achievements")
+    if c.fetchone()[0] == 0:
+        achievements = [
+            ("ach_wins_10", "مقاتل", "احصل على 10 انتصارات", "⚔️", "wins", 10),
+            ("ach_wins_50", "بطل", "احصل على 50 انتصار", "🏅", "wins", 50),
+            ("ach_streak_5", "ملتزم", "حقق 5 انتصارات متتالية", "🔥", "win_streak", 5),
+            ("ach_friend_1", "اجتماعي", "أضف صديقاً", "🤝", "friend_games", 1),
+            ("ach_clan_join", "عشائري", "انضم لعشيرة", "🏘️", "clan_joined", 1),
+            ("ach_tournament_win", "المتوج", "اربح بطولة", "👑", "tournament_win", 1),
+            ("ach_rock_100", "صخري", "استخدم الصخرة 100 مرة", "🪨", "rock_used", 100),
+            ("ach_login_7", "مدمن", "سجل دخول 7 أيام متتالية", "📅", "login_streak", 7),
+            ("ach_rating_1200", "خبير", "وصل تصنيفك إلى 1200", "📈", "rated", 1)
+        ]
+        c.executemany("INSERT INTO achievements VALUES (?,?,?,?,?,?)", achievements)
+
+    c.execute("SELECT COUNT(*) FROM shop")
+    if c.fetchone()[0] == 0:
+        for item_id, data in config.SHOP_ITEMS.items():
+            c.execute("INSERT OR IGNORE INTO shop VALUES (?,?,?,?)",
+                      (item_id, data['name'], data['price'], data['type']))
+
+    c.execute("SELECT COUNT(*) FROM titles_shop")
+    if c.fetchone()[0] == 0:
+        for t in config.TITLES_SHOP:
+            c.execute("INSERT OR IGNORE INTO titles_shop VALUES (?,?,?)", (t['id'], t['name'], t['price']))
+
+    c.execute("SELECT COUNT(*) FROM themes_shop")
+    if c.fetchone()[0] == 0:
+        for th in config.THEMES_SHOP:
+            c.execute("INSERT OR IGNORE INTO themes_shop VALUES (?,?,?)", (th['id'], th['name'], th['price']))
 
     conn.commit()
     conn.close()
