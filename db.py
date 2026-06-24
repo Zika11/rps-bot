@@ -260,13 +260,11 @@ def apply_game_result(user_id, result, move, opponent_id=None):
 
     add_battle_pass_xp(user_id, 15, conn)
 
-    # 🆕 إضافة نقاط لخزينة العشيرة وتحديث حرب العشائر
     clan = u["clan"]
     if clan:
         add_clan_treasury_points(clan, 1, conn)
         update_clan_war_score(clan, 1, conn)
 
-    # 🆕 إلحاق ضرر بالـ World Boss
     if result == "win":
         damage = random.randint(20, 50)
         add_boss_damage(user_id, damage, conn)
@@ -422,7 +420,7 @@ def buy_listing(listing_id, buyer_id):
     conn.close()
     return True
 
-# 🆕 Clan Treasury
+# --- Clan Treasury ---
 def get_clan_treasury(clan_name):
     conn = get_conn()
     row = conn.execute("SELECT * FROM clan_treasury WHERE clan_name=?", (clan_name,)).fetchone()
@@ -465,7 +463,7 @@ def upgrade_clan(clan_name, upgrade_id, conn=None):
     conn.execute("UPDATE clan_treasury SET upgrades = ? WHERE clan_name=?", (json.dumps(upgrades), clan_name))
     return True
 
-# 🆕 Clan Wars
+# --- Clan Wars ---
 def get_active_war_season():
     conn = get_conn()
     row = conn.execute("SELECT * FROM clan_war_season WHERE active=1 ORDER BY season_id DESC LIMIT 1").fetchone()
@@ -493,7 +491,7 @@ def update_clan_war_score(clan_name, points, existing_conn=None):
         conn.commit()
         conn.close()
 
-# 🆕 Spectator Mode
+# --- Spectator Mode ---
 def create_spectator_room(room_id, player1, player2, chat_id):
     conn = get_conn()
     conn.execute("INSERT INTO spectator_rooms (room_id, player1, player2, chat_id, status) VALUES (?,?,?,?,'waiting')",
@@ -515,7 +513,7 @@ def update_spectator_room(room_id, **kwargs):
     conn.commit()
     conn.close()
 
-# 🆕 Seasons
+# --- Seasons ---
 def get_active_season():
     conn = get_conn()
     row = conn.execute("SELECT * FROM season_info WHERE active=1 ORDER BY season_id DESC LIMIT 1").fetchone()
@@ -528,12 +526,11 @@ def reset_season_rankings():
     conn.commit()
     conn.close()
 
-# 🆕 World Boss
+# --- World Boss ---
 def get_world_boss():
     conn = get_conn()
     row = conn.execute("SELECT * FROM world_boss WHERE status='active'").fetchone()
     if not row:
-        # إنشاء زعيم جديد
         conn.execute("INSERT OR IGNORE INTO world_boss (boss_id, current_hp, max_hp, spawned_at) VALUES (1, ?, ?, ?)",
                      (config.BOSS_HP, config.BOSS_HP, datetime.now().isoformat()))
         conn.commit()
@@ -549,7 +546,6 @@ def add_boss_damage(user_id, damage, existing_conn=None):
     conn.execute("UPDATE boss_damage SET damage = damage + ?, attacks = attacks + 1 WHERE user_id=? AND boss_id=?",
                  (damage, user_id, boss["boss_id"]))
     conn.execute("UPDATE world_boss SET current_hp = MAX(0, current_hp - ?) WHERE boss_id=?", (damage, boss["boss_id"]))
-    # إذا انتهت نقاط الزعيم
     updated = conn.execute("SELECT current_hp FROM world_boss WHERE boss_id=?", (boss["boss_id"],)).fetchone()
     if updated and updated[0] <= 0:
         conn.execute("UPDATE world_boss SET status='defeated' WHERE boss_id=?", (boss["boss_id"],))
@@ -566,3 +562,88 @@ def get_top_boss_damagers():
     """).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+# 🆕 --- قدرات ---
+def get_ability_count(user_id, ability):
+    conn = get_conn()
+    row = conn.execute(f"SELECT {ability} FROM user_abilities WHERE user_id=?", (user_id,)).fetchone()
+    if not row:
+        conn.execute("INSERT OR IGNORE INTO user_abilities (user_id) VALUES (?)", (user_id,))
+        conn.commit()
+        row = conn.execute(f"SELECT {ability} FROM user_abilities WHERE user_id=?", (user_id,)).fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+def use_ability(user_id, ability):
+    conn = get_conn()
+    count = conn.execute(f"SELECT {ability} FROM user_abilities WHERE user_id=?", (user_id,)).fetchone()
+    if not count or count[0] <= 0: return False
+    conn.execute(f"UPDATE user_abilities SET {ability} = {ability} - 1 WHERE user_id=?", (user_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+def buy_ability(user_id, ability):
+    cost = config.ABILITIES[ability]["cost"]
+    conn = get_conn()
+    u = conn.execute("SELECT points FROM users WHERE user_id=?", (user_id,)).fetchone()
+    if not u or u["points"] < cost: return False
+    conn.execute("UPDATE users SET points = points - ? WHERE user_id=?", (cost, user_id))
+    conn.execute("INSERT OR IGNORE INTO user_abilities (user_id) VALUES (?)", (user_id,))
+    conn.execute(f"UPDATE user_abilities SET {ability} = {ability} + 1 WHERE user_id=?", (user_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+# 🆕 --- Mass Battle ---
+def start_mass_battle(chat_id):
+    conn = get_conn()
+    cur = conn.execute("INSERT INTO mass_battle (chat_id, start_time) VALUES (?, datetime('now'))", (chat_id,))
+    battle_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return battle_id
+
+def add_mass_pick(battle_id, user_id, move):
+    conn = get_conn()
+    conn.execute("INSERT OR IGNORE INTO mass_battle_picks (battle_id, user_id, move) VALUES (?,?,?)",
+                 (battle_id, user_id, move))
+    conn.commit()
+    conn.close()
+
+def get_mass_battle_results(battle_id):
+    conn = get_conn()
+    picks = conn.execute("SELECT move, COUNT(*) as cnt FROM mass_battle_picks WHERE battle_id=? GROUP BY move", (battle_id,)).fetchall()
+    winners = []
+    if picks:
+        sorted_picks = sorted(picks, key=lambda x: x["cnt"], reverse=True)
+        winning_move = sorted_picks[0]["move"]
+        winner_rows = conn.execute("SELECT user_id FROM mass_battle_picks WHERE battle_id=? AND move=?", (battle_id, winning_move)).fetchall()
+        winners = [r["user_id"] for r in winner_rows]
+    conn.execute("UPDATE mass_battle SET status='finished' WHERE battle_id=?", (battle_id,))
+    conn.commit()
+    conn.close()
+    return winners
+
+# 🆕 --- Team Battles ---
+def create_team_battle(chat_id, team1_name, team2_name):
+    conn = get_conn()
+    cur = conn.execute("INSERT INTO team_battles (chat_id, team1_name, team2_name) VALUES (?,?,?)",
+                      (chat_id, team1_name, team2_name))
+    battle_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return battle_id
+
+def add_team_player(battle_id, user_id, team):
+    conn = get_conn()
+    conn.execute("INSERT OR IGNORE INTO team_battle_players (battle_id, user_id, team) VALUES (?,?,?)",
+                 (battle_id, user_id, team))
+    conn.commit()
+    conn.close()
+
+def get_team_players(battle_id, team):
+    conn = get_conn()
+    rows = conn.execute("SELECT user_id FROM team_battle_players WHERE battle_id=? AND team=?", (battle_id, team)).fetchall()
+    conn.close()
+    return [r["user_id"] for r in rows]
