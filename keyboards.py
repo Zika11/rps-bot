@@ -163,7 +163,7 @@ def admin_menu():
         [InlineKeyboardButton("🚫 إغلاق", callback_data="delete_message")]
     ])
 
-# 🆕 Mini Game Platform
+# Mini Game Platform
 def abilities_shop():
     from config import ABILITIES
     buttons = []
@@ -181,4 +181,19 @@ def team_battle_team_buttons(battle_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔴 انضم للفريق الأحمر", callback_data=f"team_join_{battle_id}_red")],
         [InlineKeyboardButton("🔵 انضم للفريق الأزرق", callback_data=f"team_join_{battle_id}_blue")],
+    ])
+
+# أزرار التصويت للقناة
+def channel_vote_buttons(chat_id):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("👊 حجر", callback_data=f"channel_vote_{chat_id}_rock"),
+            InlineKeyboardButton("✋ ورق", callback_data=f"channel_vote_{chat_id}_paper"),
+            InlineKeyboardButton("✌️ مقص", callback_data=f"channel_vote_{chat_id}_scissors")
+        ]
+    ])
+
+def channel_leaderboard_button(chat_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏆 قائمة الأفضل", callback_data=f"ch_leaderboard_{chat_id}")]
     ])
