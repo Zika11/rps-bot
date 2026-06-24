@@ -1,9 +1,13 @@
-import sqlite3, json
+import sqlite3, json, logging, hashlib, hmac
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from engine import voting, rewards, state
+import config
 
 app = FastAPI(title="RPS Channel Game API")
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("api")
 
 class VoteRequest(BaseModel):
     chat_id: int
@@ -21,7 +25,6 @@ def root():
 
 @app.get("/round/{chat_id}")
 def get_round_status(chat_id: int):
-    """معرفة حالة الجولة الحالية"""
     loop = voting.get_channel_loop(chat_id)
     if not loop:
         return {"status": "no active round", "chat_id": chat_id}
@@ -35,7 +38,6 @@ def get_round_status(chat_id: int):
 
 @app.post("/vote")
 def submit_vote(data: VoteRequest):
-    """تسجيل اختيار لاعب"""
     success = voting.record_channel_vote(data.chat_id, data.user_id, data.move)
     if not success:
         raise HTTPException(status_code=400, detail="الجولة غير نشطة أو انتهت")
@@ -43,7 +45,6 @@ def submit_vote(data: VoteRequest):
 
 @app.post("/predict")
 def submit_prediction(data: PredictionRequest):
-    """تسجيل توقع الفائز"""
     success = voting.record_prediction(data.chat_id, data.user_id, data.predicted_move)
     if not success:
         raise HTTPException(status_code=400, detail="غير متاح")
@@ -51,7 +52,6 @@ def submit_prediction(data: PredictionRequest):
 
 @app.post("/finish_round/{chat_id}")
 def finish_round(chat_id: int):
-    """إنهاء الجولة وجلب النتائج (تُستدعى من البوت أو الويب)"""
     result = voting.finish_channel_round(chat_id)
     if result is None:
         raise HTTPException(status_code=404, detail="الجولة غير موجودة")
@@ -59,7 +59,6 @@ def finish_round(chat_id: int):
 
 @app.get("/leaderboard/{chat_id}")
 def leaderboard(chat_id: int, limit: int = 10):
-    """قائمة أفضل اللاعبين في القناة"""
     conn = sqlite3.connect("rps_bot.db")
     conn.row_factory = sqlite3.Row
     rows = conn.execute("""
@@ -69,3 +68,18 @@ def leaderboard(chat_id: int, limit: int = 10):
     """, (chat_id, limit)).fetchall()
     conn.close()
     return [{"name": r["first_name"], "points": r["points"]} for r in rows]
+
+# 🆕 نقطة نهاية للتحقق من بيانات تسجيل الدخول عبر Telegram
+@app.post("/auth/telegram")
+async def verify_telegram(data: dict):
+    check_hash = data.pop("hash", None)
+    if not check_hash:
+        return {"valid": False}
+
+    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(data.items()))
+    secret_key = hashlib.sha256(config.BOT_TOKEN.encode()).digest()
+    hmac_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+
+    if hmac_hash == check_hash:
+        return {"valid": True}
+    return {"valid": False}
