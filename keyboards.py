@@ -2,6 +2,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from config import *
 
 def main_menu_keyboard(user_id=None):
+    from bot import is_founder
     rows = [
         [InlineKeyboardButton("🎮 العب الآن", callback_data="menu_play")],
         [InlineKeyboardButton("🎁 المكافأة اليومية", callback_data="daily_bonus")],
@@ -37,28 +38,18 @@ def play_menu_keyboard():
     ])
 
 def solo_keyboard(user_id=None):
-    # تستدعي get_choices_for_user التي سنضعها في utils.py (أو يمكن استيرادها)
-    # حالياً سنستدعيها من هنا، لكن يمكن نقلها لـ utils.py
-    # لتجنب التعقيد سنترك استدعاء get_choices_for_user في هذا الملف بعد استيرادها من utils لاحقاً
-    # في هذه المرحلة سنعرف الدالة هنا مؤقتاً أو نستوردها.
-    # الأفضل: import from utils once created.
-    # لكن بما أننا لم ننشئ utils بعد، سنضع الدالة المساعدة هنا مؤقتاً.
-    pass  # سيتم استكمالها بعد إنشاء utils.py
+    from bot import get_choices_for_user
+    choices = get_choices_for_user(user_id)
+    return InlineKeyboardMarkup([[InlineKeyboardButton(v, callback_data=f"solo_{k}") for k,v in choices.items()]])
 
 def mp_keyboard(game_id):
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(v, callback_data=f"mp_{game_id}_{k}")
-        for k, v in CHOICES.items()
-    ]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton(v, callback_data=f"mp_{game_id}_{k}") for k,v in CHOICES.items()]])
 
 def channel_keyboard(channel_id):
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(v, callback_data=f"ch_{channel_id}_{k}")
-        for k, v in CHOICES.items()
-    ]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton(v, callback_data=f"ch_{channel_id}_{k}") for k,v in CHOICES.items()]])
 
 def stars_keyboard():
-    options = [1, 5, 10, 20, 30, 40, 50]
+    options = [1,5,10,20,30,40,50]
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(f"{'⭐'*(min(s//10+1,3))} {s}", callback_data=f"rate_{s}") for s in options[:4]],
         [InlineKeyboardButton(f"{'⭐'*(min(s//10+1,3))} {s}", callback_data=f"rate_{s}") for s in options[4:]],
