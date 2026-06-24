@@ -168,7 +168,7 @@ def init_db():
         )
     """)
 
-    # جداول إدارة المباريات الجديدة
+    # جداول إدارة المباريات
     c.execute("""
         CREATE TABLE IF NOT EXISTS pending_matches (
             user_id INTEGER PRIMARY KEY
@@ -183,6 +183,24 @@ def init_db():
             status TEXT,
             data TEXT DEFAULT '{}',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # 🆕 جداول الميزات الجديدة
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS daily_claims (
+            user_id INTEGER PRIMARY KEY,
+            last_claimed_date TEXT,
+            streak INTEGER DEFAULT 0
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS battle_pass (
+            user_id INTEGER PRIMARY KEY,
+            season INTEGER DEFAULT 1,
+            xp INTEGER DEFAULT 0,
+            level INTEGER DEFAULT 1,
+            premium INTEGER DEFAULT 0
         )
     """)
 
