@@ -54,7 +54,7 @@ def get_round_status(chat_id):
     return {
         "chat_id": chat_id,
         "round_id": loop["round_id"],
-        "players_count": len(json.loads(loop["players_choice"] or "{}")),
+        "players_count": voting.get_voter_count(chat_id),
         "interval_sec": loop["interval_sec"],
         "ttl_sec": loop["ttl_sec"],
         "status": loop["status"],
