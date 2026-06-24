@@ -32,6 +32,36 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"أهلاً {user.first_name}! اختر من القائمة:"
     await update.message.reply_text(text, reply_markup=keyboards.main_menu())
 
+# ---------- أمر /me لعرض بروفايل اللاعب مع الرانك ----------
+async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    u = db.get_user(user.id)
+    if not u:
+        await update.message.reply_text("سجّل دخولك أولاً باستخدام /start")
+        return
+
+    rating = db.get_user_rating(user.id) or config.DEFAULT_RATING
+    tier_name, tier_icon = config.get_tier_info(rating)
+    wins = u.get("wins", 0)
+    losses = u.get("losses", 0)
+    draws = u.get("draws", 0)
+    total = wins + losses + draws
+    winrate = f"{(wins / total * 100):.1f}%" if total > 0 else "0%"
+
+    profile_text = (
+        f"👤 {u['first_name']}\n"
+        f"🏅 التصنيف: {rating} نقطة\n"
+        f"{tier_icon} الرانك: {tier_name}\n"
+        f"⚔️ الإنتصارات: {wins}\n"
+        f"💀 الهزائم: {losses}\n"
+        f"🤝 التعادلات: {draws}\n"
+        f"📈 نسبة الفوز: {winrate}\n"
+        f"💎 الجواهر: {u.get('gems', 0)}\n"
+        f"🎖 الإنجازات: {len((u.get('achievements') or '').split(',')) if u.get('achievements') else 0}\n"
+        f"🏘️ العشيرة: {u.get('clan', 'لا يوجد')}"
+    )
+    await update.message.reply_text(profile_text)
+
 # ---------- معالج الأزرار الرئيسي ----------
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -80,7 +110,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "📊 أفضل 10 لاعبين:\n"
         for i, r in enumerate(top, 1):
             name = r["first_name"] or str(r["user_id"])
-            text += f"{i}. {name} - {r['rating']}\n"
+            # نضيف الرانك لكل لاعب في القائمة
+            rating_val = r["rating"]
+            tier_name, tier_icon = config.get_tier_info(rating_val)
+            text += f"{i}. {name} - {rating_val} ({tier_icon} {tier_name})\n"
         await query.edit_message_text(text, reply_markup=keyboards.back_button())
     elif data == "language":
         u = db.get_user(user.id)
@@ -178,7 +211,8 @@ async def process_move(update, context, move, game_type):
         return
 
     if game_type == "solo":
-        bot_move = utils.smart_bot_choice(user.id)
+        # استخدام الذكاء المطور (Markov Chain) بدلاً من الذكاء القديم
+        bot_move = utils.markov_bot_choice(user.id)
         result = game_logic.get_result(move, bot_move)
         await finish_game(update, context, user.id, move, bot_move, result)
     elif game_type == "random":
@@ -200,6 +234,7 @@ async def process_spock_move(update, context, move):
     query = update.callback_query
     user = query.from_user
     from config import SPOCK_CHOICES, SPOCK_WIN_MAP
+    # في وضع Spock نستخدم عشوائي حاليًا (يمكن تطويره لاحقًا بنفس Markov)
     bot_move = random.choice(list(SPOCK_CHOICES.keys()))
     if move == bot_move:
         result = "draw"
@@ -267,14 +302,13 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_war_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not utils.is_founder(update.effective_user.id):
         return
-    # بدء حرب عشائر (مبسطة)
     await update.message.reply_text("بدأت حرب العشائر!")
-    # هنا يمكن إضافة كود إنشاء الحرب في قاعدة البيانات
 
 # ---------- تشغيل البوت ----------
 def main():
     app = Application.builder().token(config.BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("me", me_command))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("start_war", start_war_command))
     app.add_handler(CallbackQueryHandler(button_handler))
