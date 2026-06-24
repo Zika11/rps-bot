@@ -203,7 +203,7 @@ def mini_app_button():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
             "🎮 افتح اللعبة",
-            web_app=WebAppInfo(url="https://rps-bot-six.vercel.app")
+            web_app=WebAppInfo(url="https://rps-bot-six.vercel.app/webapp/index.html")
         )]
     ])
 
@@ -227,4 +227,14 @@ def channel_main_menu(chat_id):
 def weekly_leaderboard_button(chat_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 الأفضل هذا الأسبوع", callback_data=f"weekly_leaderboard_{chat_id}")]
+    ])
+
+# 🆕 أزرار ديناميكية مع عدد المصوتين (Live UI)
+def dynamic_rps_keyboard(counts):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"🪨 حجر ({counts.get('rock', 0)})", callback_data="move_rock"),
+            InlineKeyboardButton(f"📄 ورق ({counts.get('paper', 0)})", callback_data="move_paper"),
+            InlineKeyboardButton(f"✂️ مقص ({counts.get('scissors', 0)})", callback_data="move_scissors"),
+        ]
     ])
