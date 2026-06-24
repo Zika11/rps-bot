@@ -4,6 +4,10 @@ active_games = {}
 pending_matches = []
 active_locks = asyncio.Lock()
 
+# تحديات المشاهدة: مفتاح challenge_id، قيمة dict {players, group_id, moves, ...}
+spectate_challenges = {}
+spectate_lock = asyncio.Lock()
+
 async def add_pending(user_id):
     """إضافة لاعب لقائمة الانتظار أو إرجاع الخصم لو فيه لاعب منتظر"""
     async with active_locks:
