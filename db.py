@@ -9,7 +9,7 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
-# --- دوال المستخدمين الأساسية ---
+# --- دوال المستخدمين الأساسية (موجودة أيضاً في engine/users.py) ---
 def get_user(user_id):
     conn = get_conn()
     row = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
