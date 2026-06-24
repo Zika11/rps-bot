@@ -1,5 +1,5 @@
 import sqlite3
-import os
+import config
 
 DB_NAME = "rps_bot.db"
 
@@ -168,7 +168,7 @@ def init_db():
         )
     """)
 
-    # إدراج بعض المهام الافتراضية إن لم تكن موجودة
+    # إدراج بيانات افتراضية إذا كانت الجداول فارغة
     c.execute("SELECT COUNT(*) FROM tasks")
     if c.fetchone()[0] == 0:
         tasks = [
@@ -180,7 +180,6 @@ def init_db():
         ]
         c.executemany("INSERT INTO tasks VALUES (?,?,?)", tasks)
 
-    # إدراج بعض الإنجازات الافتراضية
     c.execute("SELECT COUNT(*) FROM achievements")
     if c.fetchone()[0] == 0:
         achievements = [
@@ -192,25 +191,24 @@ def init_db():
             ("ach_tournament_win", "المتوج", "اربح بطولة", "👑", "tournament_win", 1),
             ("ach_rock_100", "صخري", "استخدم الصخرة 100 مرة", "🪨", "rock_used", 100),
             ("ach_login_7", "مدمن", "سجل دخول 7 أيام متتالية", "📅", "login_streak", 7),
-            ("ach_rating_1200", "خبير", "وصل تصنيفك إلى 1200", "📈", "rated", 1)  # rated field: just having a rating row
+            ("ach_rating_1200", "خبير", "وصل تصنيفك إلى 1200", "📈", "rated", 1)
         ]
         c.executemany("INSERT INTO achievements VALUES (?,?,?,?,?,?)", achievements)
 
-    # إدراج عناصر المتجر الأساسية
     c.execute("SELECT COUNT(*) FROM shop")
     if c.fetchone()[0] == 0:
-        for item_id, data in __import__('config').SHOP_ITEMS.items():
+        for item_id, data in config.SHOP_ITEMS.items():
             c.execute("INSERT OR IGNORE INTO shop VALUES (?,?,?,?)",
                       (item_id, data['name'], data['price'], data['type']))
 
-    # إدراج الألقاب والثيمات القابلة للشراء
     c.execute("SELECT COUNT(*) FROM titles_shop")
     if c.fetchone()[0] == 0:
-        for t in __import__('config').TITLES_SHOP:
+        for t in config.TITLES_SHOP:
             c.execute("INSERT OR IGNORE INTO titles_shop VALUES (?,?,?)", (t['id'], t['name'], t['price']))
+
     c.execute("SELECT COUNT(*) FROM themes_shop")
     if c.fetchone()[0] == 0:
-        for th in __import__('config').THEMES_SHOP:
+        for th in config.THEMES_SHOP:
             c.execute("INSERT OR IGNORE INTO themes_shop VALUES (?,?,?)", (th['id'], th['name'], th['price']))
 
     conn.commit()
