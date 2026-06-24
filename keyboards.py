@@ -160,6 +160,9 @@ def admin_menu():
         [InlineKeyboardButton("👤 تعديل نقاط", callback_data="admin_set_points")],
         [InlineKeyboardButton("📺 إدارة القنوات", callback_data="admin_channels")],
         [InlineKeyboardButton("🔄 مسح المباريات", callback_data="admin_reset")],
+        # 🆕 أزرار بدء وإيقاف القناة
+        [InlineKeyboardButton("▶️ بدء لعبة في قناة", callback_data="admin_start_channel")],
+        [InlineKeyboardButton("⏹️ إيقاف لعبة في قناة", callback_data="admin_stop_channel")],
         [InlineKeyboardButton("🚫 إغلاق", callback_data="delete_message")]
     ])
 
