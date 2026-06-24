@@ -341,3 +341,170 @@ async def reject_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with state.spectate_lock:
         state.spectate_challenges.pop(challenge_id, None)
     await query.edit_message_text("تم رفض التحدي.")
+
+# ---------- 🆕 Clan Treasury ----------
+async def clan_treasury_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    u = db.get_user(user.id)
+    clan_name = u.get("clan")
+    if not clan_name:
+        await query.answer("أنت لست في عشيرة!")
+        return
+    await query.edit_message_text(f"🏦 خزينة {clan_name}", reply_markup=keyboards.clan_treasury_menu(clan_name))
+
+async def treasury_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    clan_name = query.data.split("_")[-1]
+    t = db.get_clan_treasury(clan_name)
+    if not t:
+        await query.edit_message_text("الخزينة فارغة.")
+        return
+    upgrades = json.loads(t["upgrades"] or "{}")
+    text = f"🏦 خزينة {clan_name}\n💰 نقاط: {t['points']}\n💎 جواهر: {t['gems']}\n\nالتطويرات:\n"
+    for up_id, up_data in config.CLAN_UPGRADES.items():
+        lvl = upgrades.get(up_id, 0)
+        text += f"{up_data['name']}: مستوى {lvl}/{up_data['levels']}\n"
+    await query.edit_message_text(text, reply_markup=keyboards.clan_treasury_menu(clan_name))
+
+async def treasury_donate_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    clan_name = query.data.split("_")[-1]
+    u = db.get_user(user.id)
+    if u["points"] < 50:
+        await query.answer("تحتاج 50 نقطة على الأقل")
+        return
+    db.update_user(user.id, points=u["points"] - 50)
+    db.add_clan_treasury_points(clan_name, 50)
+    await query.answer("تم التبرع بـ 50 نقطة للعشيرة!")
+
+async def treasury_donate_gems(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    clan_name = query.data.split("_")[-1]
+    u = db.get_user(user.id)
+    if u["gems"] < 5:
+        await query.answer("تحتاج 5 جواهر")
+        return
+    db.update_user(user.id, gems=u["gems"] - 5)
+    db.add_clan_treasury_gems(clan_name, 5)
+    await query.answer("تم التبرع بـ 5 جواهر!")
+
+async def treasury_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    clan_name = query.data.split("_")[-1]
+    # عرض قائمة التطويرات
+    buttons = []
+    for up_id, up_data in config.CLAN_UPGRADES.items():
+        buttons.append([InlineKeyboardButton(up_data['name'], callback_data=f"do_upgrade_{clan_name}_{up_id}")])
+    buttons.append([InlineKeyboardButton("رجوع", callback_data=f"treasury_view_{clan_name}")])
+    await query.edit_message_text("اختر تطويراً:", reply_markup=InlineKeyboardMarkup(buttons))
+
+async def do_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("_")
+    clan_name = parts[2]
+    upgrade_id = parts[3]
+    success = db.upgrade_clan(clan_name, upgrade_id)
+    if success:
+        await query.answer("تم التطوير بنجاح!")
+    else:
+        await query.answer("فشل التطوير. نقاط غير كافية أو وصلت لأقصى مستوى.")
+    await treasury_view(update, context)
+
+# ---------- 🆕 Clan War Info ----------
+async def clan_war_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    season = db.get_active_war_season()
+    if not season:
+        await query.edit_message_text("لا يوجد موسم حرب عشائر نشط حالياً.")
+        return
+    conn = db.get_conn()
+    scores = conn.execute("SELECT clan_name, region, score FROM clan_war_scores WHERE season_id=? ORDER BY score DESC", (season["season_id"],)).fetchall()
+    conn.close()
+    text = f"⚔️ موسم حرب العشائر (من {season['start_date'][:10]} إلى {season['end_date'][:10]})\n\n"
+    if scores:
+        text += "النتائج:\n"
+        for s in scores:
+            text += f"{s['clan_name']} - {s['region']}: {s['score']} نقطة\n"
+    else:
+        text += "لا توجد نتائج بعد."
+    await query.edit_message_text(text, reply_markup=keyboards.back_button("clans"))
+
+# ---------- 🆕 Spectator Room (مشاهدة مباراة في القناة) ----------
+async def spectate_room_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    chat_id = int(query.data.split("_")[-1])
+    user = query.from_user
+    # بدء تحدي مفتوح للمشاهدة (يختار هو حركته، وأي مشترك يقبل)
+    room_id = str(uuid.uuid4())[:8]
+    await context.bot.send_message(user.id, "اختر حركتك (للمشاهدة):", reply_markup=keyboards.choice_buttons(f"spectate_{room_id}"))
+    db.create_spectator_room(room_id, user.id, None, chat_id)
+    await query.answer("تم إنشاء غرفة مشاهدة. اختر حركتك في الخاص.")
+
+async def spectate_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    room_id = query.data.split("_")[-1]
+    room = db.get_spectator_room(room_id)
+    if not room or room["status"] != "waiting":
+        await query.answer("انتهت الغرفة.")
+        return
+    if user.id == room["player1"]:
+        await query.answer("لا يمكنك الانضمام إلى غرفتك!")
+        return
+    db.update_spectator_room(room_id, player2=user.id, status="active")
+    await context.bot.send_message(user.id, "اختر حركتك:", reply_markup=keyboards.choice_buttons(f"spectate_{room_id}"))
+    await query.answer("تم قبول التحدي! اختر حركتك في الخاص.")
+
+# ---------- 🆕 Season ----------
+async def season_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    season = db.get_active_season()
+    if not season:
+        await update.message.reply_text("لا يوجد موسم نشط حالياً.")
+        return
+    # عرض أفضل 5 في الموسم
+    conn = db.get_conn()
+    top = conn.execute("""
+        SELECT u.first_name, s.rating, s.wins FROM season_rankings s
+        JOIN users u ON s.user_id = u.user_id
+        WHERE s.season_id = ? ORDER BY s.rating DESC LIMIT 5
+    """, (season["season_id"],)).fetchall()
+    conn.close()
+    text = f"🏆 **موسم {season['name']}**\nينتهي في {season['end_date'][:10]}\n\nأفضل 5 لاعبين:\n"
+    for i, r in enumerate(top, 1):
+        text += f"{i}. {r['first_name']} - {r['rating']} (انتصارات: {r['wins']})\n"
+    await update.message.reply_text(text)
+
+# ---------- 🆕 World Boss ----------
+async def boss_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    boss = db.get_world_boss()
+    if not boss or boss["status"] != "active":
+        await update.message.reply_text("لا يوجد زعيم عالمي حالياً. سيظهر قريباً!")
+        return
+    hp_percent = (boss["current_hp"] / boss["max_hp"]) * 100
+    text = f"🐉 **{boss['name']}**\n❤️ الصحة: {boss['current_hp']}/{boss['max_hp']} ({hp_percent:.1f}%)\n\nاضغط أدناه للهجوم!"
+    await update.message.reply_text(text, reply_markup=keyboards.world_boss_menu())
+
+async def boss_attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    boss = db.get_world_boss()
+    if not boss or boss["status"] != "active":
+        await query.answer("انتهى الزعيم!")
+        return
+    # الهجوم عبارة عن نقاط عشوائية
+    damage = random.randint(10, 40)
+    db.add_boss_damage(user.id, damage)
+    db.update_user(user.id, points=db.get_user(user.id)["points"] + 5)  # مكافأة صغيرة
+    boss = db.get_world_boss()
+    if boss["status"] == "defeated":
+        # توزيع المكافآت
+        top_damagers = db.get_top_boss_damagers()
+        if top_damagers:
+            winner = top_damagers[0]
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"🎉 **{winner['first_name']}** وجه الضربة القاضية للزعيم! ربح {config.BOSS_REWARD_TOP_DAMAGE[1]} نقطة!")
+        await query.edit_message_text("🐉 الزعيم انهزم! مكافآت قريباً.")
+    else:
+        await query.answer(f"ألحقت {damage} ضرراً بالزعيم! +5 نقاط")
