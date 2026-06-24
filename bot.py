@@ -556,6 +556,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await admin_channels_list(update, context)
     elif data == "admin_reset":
         await admin_reset_games(update, context)
+    elif data == "admin_start_channel":
+        await channel_h.admin_start_channel_prompt(update, context)
+    elif data == "admin_stop_channel":
+        await channel_h.admin_stop_channel_prompt(update, context)
     elif data == "boss_attack":
         await misc_h.boss_attack(update, context)
     elif data == "boss_status":
@@ -662,6 +666,14 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["awaiting_set_points"] = False
             return
 
+        if context.user_data.get("awaiting_start_channel"):
+            await channel_h.process_start_channel_text(update, context)
+            return
+
+        if context.user_data.get("awaiting_stop_channel"):
+            await channel_h.process_stop_channel_text(update, context)
+            return
+
         if len(msg) > 100:
             await update.message.reply_text("النص طويل جداً.")
             return
@@ -686,7 +698,7 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
         if chat_id in state.group_game_sessions: return
     await context.bot.send_message(chat_id, "مرحباً بك في RPS Arena!", reply_markup=keyboards.channel_main_menu(chat_id))
 
-# ---------- أوامر القناة ----------
+# ---------- أوامر القناة (قديمة، للاحتياط) ----------
 async def start_channel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not utils.is_founder(update.effective_user.id):
         return
