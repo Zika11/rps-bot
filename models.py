@@ -300,6 +300,58 @@ def init_db():
         )
     """)
 
+    # 🆕 قدرات اللاعبين
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS user_abilities (
+            user_id INTEGER PRIMARY KEY,
+            shield INTEGER DEFAULT 1,
+            double_points INTEGER DEFAULT 1,
+            reverse INTEGER DEFAULT 1,
+            shield_last_used TEXT,
+            double_points_last_used TEXT,
+            reverse_last_used TEXT
+        )
+    """)
+
+    # 🆕 معارك جماعية
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS mass_battle (
+            battle_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            start_time TEXT,
+            status TEXT DEFAULT 'active'
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS mass_battle_picks (
+            battle_id INTEGER,
+            user_id INTEGER,
+            move TEXT,
+            PRIMARY KEY (battle_id, user_id)
+        )
+    """)
+
+    # 🆕 Team Battles
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS team_battles (
+            battle_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            team1_name TEXT,
+            team2_name TEXT,
+            status TEXT DEFAULT 'active',
+            round INTEGER DEFAULT 1,
+            winner_team TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS team_battle_players (
+            battle_id INTEGER,
+            user_id INTEGER,
+            team TEXT,
+            PRIMARY KEY (battle_id, user_id)
+        )
+    """)
+
     # إدراج بيانات افتراضية
     c.execute("SELECT COUNT(*) FROM tasks")
     if c.fetchone()[0] == 0:
