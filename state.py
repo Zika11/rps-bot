@@ -1,51 +1,12 @@
-# 🎮 RPS-Bot - بوت حجر ورقة مقص متكامل
+import asyncio
 
-بوت تلغرام متعدد الميزات للعبة حجر ورقة مقص مع أنظمة متقدمة للعب والتنافس.
+active_games_lock = asyncio.Lock()
+pending_matches_lock = asyncio.Lock()
+channel_games_lock = asyncio.Lock()
+channel_tasks_lock = asyncio.Lock()
 
-## 🌟 الميزات الرئيسية
-- 🤖 أنماط لعب متعددة (فردي، أصدقاء، عشوائي، بطولات، قنوات)
-- 💰 نظام نقاط وجواهر ومتجر وبطاقات
-- 🗡️ عشائر، تحديات جماعية، حروب عشائر
-- 🎁 مهام يومية، إنجازات، مكافآت Streak
-- 🏅 ألقاب وثيمات قابلة للتخصيص
-- 🎉 أحداث موسمية
-- 🌍 دعم لغات متعددة (العربية والإنجليزية)
-- 📊 لوحة تحكم ويب (Flask)
-- ⚡ دعم Redis للتخزين المؤقت
-- 🛡️ معالج أخطاء عام
-
-## 🚀 التشغيل السريع
-
-### 1. انسخ المستودع
-git clone https://github.com/zika11/RPS-Bot.git
-cd RPS-Bot
-
-### 2. ثبت المتطلبات
-pip install -r requirements.txt
-
-### 3. عين متغيرات البيئة
-متغيرات البيئة المطلوبة:
-- `BOT_TOKEN`: توكن البوت من @BotFather
-- `GOOGLE_CREDS`: محتوى JSON حساب خدمة Google Sheets
-
-### 4. شغل البوت
-python bot.py
-
-## 📋 الأوامر الرئيسية
-- `/start` - بدء البوت
-- `/activate` - تفعيل اللعب التلقائي في جروب
-- `/tournament` - إنشاء بطولة
-- `/groupchallenge` - بدء تحدي جماعي
-- `/clanwar` - حالة حرب العشائر
-- `/language` - تغيير اللغة
-- `/event` - تفاصيل الحدث الحالي
-- `/achievements` - عرض الإنجازات
-
-## 🛠️ التقنيات المستخدمة
-- Python-Telegram-Bot
-- Google Sheets API (gspread)
-- Flask (لوحة التحكم)
-- Redis (تخزين مؤقت)
-
-## 📄 الرخصة
-MIT License
+pending_matches = []
+active_games = {}
+channel_tasks = {}
+channel_games = {}
+channel_last_play = {}
