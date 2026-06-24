@@ -352,7 +352,7 @@ def init_db():
         )
     """)
 
-    # جلسات القناة للتصويت الآلي (بها عمود status و end_time)
+    # جلسات القناة للتصويت الآلي (بدون players_choice)
     c.execute("""
         CREATE TABLE IF NOT EXISTS channel_loop_state (
             chat_id INTEGER PRIMARY KEY,
@@ -361,12 +361,12 @@ def init_db():
             interval_sec INTEGER DEFAULT 60,
             ttl_sec INTEGER DEFAULT 30,
             round_id INTEGER DEFAULT 0,
-            players_choice TEXT DEFAULT '{}',
             predictions TEXT DEFAULT '{}',
             round_start_time TEXT,
             end_time TEXT
         )
     """)
+    # محاولة إضافة أو تعديل الأعمدة إذا كان الجدول موجودًا مسبقًا
     try:
         c.execute("ALTER TABLE channel_loop_state ADD COLUMN status TEXT DEFAULT 'WAITING'")
     except sqlite3.OperationalError:
@@ -375,6 +375,22 @@ def init_db():
         c.execute("ALTER TABLE channel_loop_state ADD COLUMN end_time TEXT")
     except sqlite3.OperationalError:
         pass
+    try:
+        c.execute("ALTER TABLE channel_loop_state ADD COLUMN predictions TEXT DEFAULT '{}'")
+    except sqlite3.OperationalError:
+        pass
+
+    # 🆕 جدول التصويت المنفصل (بديل players_choice JSON)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS channel_votes (
+            chat_id INTEGER,
+            user_id INTEGER,
+            move TEXT,
+            round_id INTEGER,
+            voted_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (chat_id, user_id, round_id)
+        )
+    """)
 
     # متابعة الـ Streak لكل لاعب في كل قناة
     c.execute("""
