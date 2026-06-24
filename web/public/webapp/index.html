@@ -17,11 +17,7 @@
             min-height: 100vh;
             padding: 1rem;
         }
-        .container {
-            width: 100%;
-            max-width: 400px;
-            text-align: center;
-        }
+        .container { width: 100%; max-width: 400px; text-align: center; }
         h1 { font-size: 2rem; margin-bottom: 0.5rem; color: var(--tg-theme-button-color, #e94560); }
         .status { background: var(--tg-theme-secondary-bg-color, #16213e); border-radius: 12px; padding: 1rem; margin: 1rem 0; font-size: 1rem; }
         .moves { display: flex; gap: 1rem; justify-content: center; margin: 1.5rem 0; }
@@ -44,7 +40,7 @@
         }
         .confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .message { margin-top: 1rem; padding: 0.5rem; border-radius: 8px; background: var(--tg-theme-hint-color, #0f3460); }
-        .auth-btn { padding: 0.75rem 1.5rem; font-size: 1rem; border: none; border-radius: 8px; background: var(--tg-theme-button-color, #e94560); color: white; cursor: pointer; }
+        .error { color: #e94560; margin: 1rem 0; }
     </style>
 </head>
 <body>
@@ -52,8 +48,8 @@
         <h1>✊ ✋ ✌️</h1>
         <p>حجر ورقة مقص</p>
 
-        <div id="login-section">
-            <button class="auth-btn" onclick="loginWithTelegram()">تسجيل الدخول للمشاركة</button>
+        <div id="loading-section">
+            <p>⏳ جاري التحقق...</p>
         </div>
 
         <div id="game-section" style="display: none;">
@@ -66,6 +62,10 @@
             <button class="confirm-btn" id="confirm-btn" disabled onclick="submitVote()">تأكيد الاختيار</button>
             <div class="message" id="message"></div>
         </div>
+
+        <div id="error-section" style="display: none;" class="error">
+            ⚠️ يرجى فتح التطبيق من داخل تيليجرام
+        </div>
     </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
@@ -74,6 +74,7 @@
         let tg = window.Telegram.WebApp;
         let selectedMove = null;
         let chatId = null;
+        let currentUser = null;
 
         tg.ready();
         tg.expand();
@@ -85,12 +86,15 @@
             chatId = tg.initDataUnsafe.start_param;
         }
 
-        async function loginWithTelegram() {
+        // التحقق التلقائي من المستخدم
+        async function autoLogin() {
             const initData = tg.initData;
             if (!initData) {
-                document.getElementById('message').innerText = 'تعذر تسجيل الدخول';
+                document.getElementById('loading-section').style.display = 'none';
+                document.getElementById('error-section').style.display = 'block';
                 return;
             }
+
             try {
                 const response = await fetch(`${API_BASE}/auth/telegram`, {
                     method: 'POST',
@@ -99,15 +103,21 @@
                 });
                 const data = await response.json();
                 if (data.valid) {
-                    document.getElementById('login-section').style.display = 'none';
+                    // استخراج user_id من initData بعد فكه (أو من initDataUnsafe)
+                    currentUser = tg.initDataUnsafe?.user;
+                    if (!currentUser) {
+                        throw new Error('No user data');
+                    }
+                    document.getElementById('loading-section').style.display = 'none';
                     document.getElementById('game-section').style.display = 'block';
                     loadRoundStatus();
                     setInterval(loadRoundStatus, 3000);
                 } else {
-                    document.getElementById('message').innerText = 'فشل التحقق';
+                    throw new Error('Invalid');
                 }
             } catch (e) {
-                document.getElementById('message').innerText = 'خطأ في الاتصال';
+                document.getElementById('loading-section').style.display = 'none';
+                document.getElementById('error-section').style.display = 'block';
             }
         }
 
@@ -136,9 +146,8 @@
         }
 
         async function submitVote() {
-            if (!selectedMove || !chatId) return;
-            const userId = tg.initDataUnsafe?.user?.id;
-            if (!userId) { document.getElementById('message').innerText = 'يرجى تسجيل الدخول'; return; }
+            if (!selectedMove || !chatId || !currentUser) return;
+            const userId = currentUser.id;
             try {
                 const res = await fetch(`${API_BASE}/vote`, {
                     method: 'POST',
@@ -160,10 +169,8 @@
             }
         }
 
-        // تسجيل الدخول تلقائي إذا كان المستخدم معروفاً
-        if (tg.initDataUnsafe?.user) {
-            loginWithTelegram();
-        }
+        // بدء التحقق التلقائي عند فتح الصفحة
+        autoLogin();
     </script>
 </body>
 </html>
