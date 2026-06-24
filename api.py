@@ -1,7 +1,7 @@
 import sqlite3, json, logging, hashlib, hmac
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from engine import voting, rewards, state
+import engine.game_engine as game_engine
 import config
 
 app = FastAPI(title="RPS Channel Game API")
@@ -25,41 +25,28 @@ def root():
 
 @app.get("/round/{chat_id}")
 def get_round_status(chat_id: int):
-    loop = voting.get_channel_loop(chat_id)
-    if not loop:
+    status = game_engine.get_round_status(chat_id)
+    if not status:
         return {"status": "no active round", "chat_id": chat_id}
-    return {
-        "chat_id": chat_id,
-        "round_id": loop["round_id"],
-        "players_count": len(json.loads(loop["players_choice"] or "{}")),
-        "interval_sec": loop["interval_sec"],
-        "ttl_sec": loop["ttl_sec"]
-    }
+    return status
 
 @app.post("/vote")
 async def submit_vote(data: VoteRequest):
-    # 🔒 استخدام القفل الخاص بالقناة لمنع السباق
-    lock = await state.get_vote_lock(data.chat_id)
-    async with lock:
-        success = voting.record_channel_vote(data.chat_id, data.user_id, data.move)
+    success = await game_engine.vote(data.chat_id, data.user_id, data.move)
     if not success:
         raise HTTPException(status_code=400, detail="الجولة غير نشطة أو انتهت")
     return {"status": "vote registered"}
 
 @app.post("/predict")
 async def submit_prediction(data: PredictionRequest):
-    lock = await state.get_vote_lock(data.chat_id)
-    async with lock:
-        success = voting.record_prediction(data.chat_id, data.user_id, data.predicted_move)
+    success = await game_engine.predict(data.chat_id, data.user_id, data.predicted_move)
     if not success:
         raise HTTPException(status_code=400, detail="غير متاح")
     return {"status": "prediction registered"}
 
 @app.post("/finish_round/{chat_id}")
 async def finish_round(chat_id: int):
-    lock = await state.get_vote_lock(chat_id)
-    async with lock:
-        result = voting.finish_channel_round(chat_id)
+    result = await game_engine.finish_round(chat_id)
     if result is None:
         raise HTTPException(status_code=404, detail="الجولة غير موجودة")
     return result
