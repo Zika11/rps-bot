@@ -6,6 +6,7 @@ import models, db, config, state, keyboards, game_logic, utils, handlers
 import engine.voting as voting
 import engine.rewards as channel_rewards
 import engine.state as channel_state
+import engine.users as users_engine
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -42,17 +43,17 @@ async def auto_drops(app):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
-        u = db.get_user(user.id)
+        u = users_engine.get_user(user.id)
         if not u:
-            db.create_user(user.id, user.username, user.first_name)
+            users_engine.create_user(user.id, user.username, user.first_name)
             args = context.args
             if args and args[0].startswith("ref"):
                 try:
                     ref_id = int(args[0][3:])
                     if ref_id != user.id:
-                        ref_user = db.get_user(ref_id)
+                        ref_user = users_engine.get_user(ref_id)
                         if ref_user:
-                            db.update_user(ref_id,
+                            users_engine.update_user(ref_id,
                                            referrals=int(ref_user.get("referrals",0)) + 1,
                                            points=int(ref_user.get("points",0)) + 50)
                             await context.bot.send_message(ref_id, f"🎉 {user.first_name} انضم عبر رابط الإحالة الخاص بك! ربحت 50 نقطة.")
@@ -70,7 +71,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 streak = 1
             days = (date.today() - date.fromisoformat(u["registered_date"][:10])).days if u.get("registered_date") else 0
-            db.update_user(user.id, last_login=datetime.now().isoformat(), login_streak=streak, days_since_register=days)
+            users_engine.update_user(user.id, last_login=datetime.now().isoformat(), login_streak=streak, days_since_register=days)
             await game_logic.check_achievements(user.id, context)
         text = f"أهلاً {user.first_name}! اختر من القائمة:"
         await update.message.reply_text(text, reply_markup=keyboards.main_menu())
@@ -80,7 +81,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    u = db.get_user(user.id)
+    u = users_engine.get_user(user.id)
     if not u:
         await update.message.reply_text("سجّل دخولك أولاً باستخدام /start")
         return
@@ -126,7 +127,7 @@ async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     bot_username = context.bot.username
     ref_link = f"https://t.me/{bot_username}?start=ref{user.id}"
-    u = db.get_user(user.id)
+    u = users_engine.get_user(user.id)
     refs = u.get("referrals", 0) if u else 0
     text = f"🔗 **رابط الإحالة الخاص بك:**\n{ref_link}\n\nعدد المدعوين: {refs}\nكل من ينضم عبر هذا الرابط يكسبك 50 نقطة."
     await update.message.reply_text(text)
@@ -134,31 +135,31 @@ async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def wheel_spin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
-    u = db.get_user(user.id)
+    u = users_engine.get_user(user.id)
     if u["gems"] < config.WHEEL_COST:
         await query.answer("تحتاج 5 جواهر لتدوير العجلة!")
         return
-    db.update_user(user.id, gems=u["gems"] - config.WHEEL_COST)
+    users_engine.update_user(user.id, gems=u["gems"] - config.WHEEL_COST)
     reward_type, value = db.spin_wheel(user.id)
     if reward_type == "points":
-        db.update_user(user.id, points=u["points"] + value)
+        users_engine.update_user(user.id, points=u["points"] + value)
         msg = f"🎉 ربحت {value} نقطة!"
     elif reward_type == "gems":
-        db.update_user(user.id, gems=u["gems"] + value)
+        users_engine.update_user(user.id, gems=u["gems"] + value)
         msg = f"🎉 ربحت {value} جوهرة!"
     elif reward_type == "title":
-        db.update_user(user.id, title=value)
+        users_engine.update_user(user.id, title=value)
         msg = f"🎉 حصلت على لقب '{value}'!"
     elif reward_type == "theme":
-        db.update_user(user.id, theme=value)
+        users_engine.update_user(user.id, theme=value)
         msg = f"🎉 حصلت على ثيم جديد!"
     elif reward_type == "treasure_box":
         sub = random.choice(config.TREASURE_REWARDS)
         if sub[0] == "points":
-            db.update_user(user.id, points=u["points"] + sub[1])
+            users_engine.update_user(user.id, points=u["points"] + sub[1])
             msg = f"🎁 صندوق كنز: +{sub[1]} نقطة"
         elif sub[0] == "gems":
-            db.update_user(user.id, gems=u["gems"] + sub[1])
+            users_engine.update_user(user.id, gems=u["gems"] + sub[1])
             msg = f"🎁 صندوق كنز: +{sub[1]} جوهرة"
         else:
             msg = "🎁 صندوق كنز!"
@@ -198,7 +199,7 @@ async def market_sell_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("العملة يجب أن تكون points أو gems")
         return
     owned = False
-    u = db.get_user(user.id)
+    u = users_engine.get_user(user.id)
     if item_type == "theme" and u.get("theme") == item_id:
         owned = True
     elif item_type == "title" and u.get("title") == item_id:
@@ -221,9 +222,8 @@ async def market_sell_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # ---------- أمر الويب ----------
 async def web_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إرسال رابط الويب مع معرف القناة الحالية"""
     chat_id = update.effective_chat.id
-    base_url = "https://rps-bot-six.vercel.app"  # ← تم تحديثه إلى رابط Vercel الفعلي
+    base_url = "https://rps-bot-six.vercel.app"
     web_link = f"{base_url}/?chat={chat_id}"
     await update.message.reply_text(f"🔗 رابط اللعبة على الويب:\n{web_link}")
 
@@ -248,7 +248,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handlers.clans_menu_handler(update, context)
     elif data == "tasks":
         tasks = db.get_tasks()
-        u = db.get_user(user.id)
+        u = users_engine.get_user(user.id)
         progress_data = u.get("tasks_progress")
         progress = {}
         if progress_data:
@@ -262,7 +262,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=keyboards.back_button())
     elif data == "achievements":
         all_ach = db.get_achievements()
-        u = db.get_user(user.id)
+        u = users_engine.get_user(user.id)
         earned = [a for a in (u.get("achievements") or "").split(",") if a]
         text = "🏅 الإنجازات:\n"
         for a in all_ach:
@@ -279,9 +279,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"{i}. {name} - {rating_val} ({tier_icon} {tier_name})\n"
         await query.edit_message_text(text, reply_markup=keyboards.back_button())
     elif data == "language":
-        u = db.get_user(user.id)
+        u = users_engine.get_user(user.id)
         new_lang = "en" if u["language"] == "ar" else "ar"
-        db.update_user(user.id, language=new_lang)
+        users_engine.update_user(user.id, language=new_lang)
         await query.edit_message_text("تم تغيير اللغة", reply_markup=keyboards.main_menu(new_lang))
 
     # أوضاع اللعب الخاص
@@ -412,11 +412,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("buy_frame_"):
         frame = data.split("_")[-1]
         price = config.FRAME_PRICES.get(frame, 200)
-        u = db.get_user(user.id)
+        u = users_engine.get_user(user.id)
         if u["points"] < price:
             await query.answer("نقاط غير كافية")
             return
-        db.update_user(user.id, points=u["points"] - price)
+        users_engine.update_user(user.id, points=u["points"] - price)
         db.set_user_frame(user.id, frame)
         await query.answer("تم شراء الإطار! استخدم /me لرؤيته.")
     elif data == "market":
@@ -429,7 +429,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "📊 **عروض السوق:**\n"
         buttons = []
         for l in listings[:5]:
-            seller = db.get_user(l["seller_id"])
+            seller = users_engine.get_user(l["seller_id"])
             name = seller["first_name"] if seller else "مجهول"
             text += f"{l['listing_id']}. {l['item_type']} {l['item_id']} - {l['price']} {l['price_type']} (من {name})\n"
             buttons.append([InlineKeyboardButton(f"شراء {l['listing_id']}", callback_data=f"market_buy_{l['listing_id']}")])
@@ -462,16 +462,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = data.split("_")
         rtype, value = parts[2], parts[3]
         if rtype == "points":
-            db.update_user(user.id, points=db.get_user(user.id)["points"] + int(value))
+            users_engine.update_user(user.id, points=users_engine.get_user(user.id)["points"] + int(value))
             await query.answer(f"ربحت {value} نقطة!")
         elif rtype == "gems":
-            db.update_user(user.id, gems=db.get_user(user.id).get("gems",0) + int(value))
+            users_engine.update_user(user.id, gems=users_engine.get_user(user.id).get("gems",0) + int(value))
             await query.answer(f"ربحت {value} جوهرة!")
         elif rtype == "title":
-            db.update_user(user.id, title=value)
+            users_engine.update_user(user.id, title=value)
             await query.answer(f"حصلت على لقب {value}!")
         elif rtype == "theme":
-            db.update_user(user.id, theme=value)
+            users_engine.update_user(user.id, theme=value)
             await query.answer("حصلت على ثيم جديد!")
         await query.edit_message_text(f"🎁 {user.first_name} حصل على الجائزة!")
     elif data.startswith("team_join_"):
@@ -662,7 +662,7 @@ async def process_random_pick(update, context, move, game_id):
         theme2 = utils.get_choices_for_user(p2)
         icon1 = theme1.get(m1, m1)
         icon2 = theme2.get(m2, m2)
-        text = f"⚔️ {db.get_user(p1)['first_name']} اختار {icon1} vs {db.get_user(p2)['first_name']} اختار {icon2}\nالنتيجة: {res1} لصالح {db.get_user(p1)['first_name']}"
+        text = f"⚔️ {users_engine.get_user(p1)['first_name']} اختار {icon1} vs {users_engine.get_user(p2)['first_name']} اختار {icon2}\nالنتيجة: {res1} لصالح {users_engine.get_user(p1)['first_name']}"
         await query.edit_message_text(text)
         try:
             await context.bot.send_message(p2, text)
@@ -789,8 +789,8 @@ async def process_open_acceptor_pick(update, context, move, chat_id):
         db.apply_game_result(initiator_id, result_init, initiator_move, user.id)
         result_acceptor = "loss" if result_init == "win" else ("win" if result_init == "loss" else "draw")
         db.apply_game_result(user.id, result_acceptor, move, initiator_id)
-        u1 = db.get_user(initiator_id)
-        u2 = db.get_user(user.id)
+        u1 = users_engine.get_user(initiator_id)
+        u2 = users_engine.get_user(user.id)
         theme1 = utils.get_choices_for_user(initiator_id)
         theme2 = utils.get_choices_for_user(user.id)
         icon1 = theme1.get(initiator_move, initiator_move)
@@ -846,7 +846,7 @@ async def process_tournament_pick(update, context, move, tour_id, match_index):
         elif current_round == 3:
             final_winner = match["winner"]
             if final_winner:
-                db.update_user(final_winner, tournament_wins=db.get_user(final_winner).get("tournament_wins",0)+1, points=db.get_user(final_winner)["points"]+200)
+                users_engine.update_user(final_winner, tournament_wins=users_engine.get_user(final_winner).get("tournament_wins",0)+1, points=users_engine.get_user(final_winner)["points"]+200)
                 await context.bot.send_message(final_winner, "🎉 أنت بطل البطولة! ربحت 200 نقطة.")
             db.update_tournament(tour_id, status="finished")
     await query.edit_message_text("تم تسجيل حركتك.")
@@ -873,8 +873,8 @@ async def process_spectate_pick(update, context, move, room_id):
         db.apply_game_result(p1, res1, m1, p2)
         res2 = "loss" if res1 == "win" else ("win" if res1 == "loss" else "draw")
         db.apply_game_result(p2, res2, m2, p1)
-        u1 = db.get_user(p1)
-        u2 = db.get_user(p2)
+        u1 = users_engine.get_user(p1)
+        u2 = users_engine.get_user(p2)
         theme1 = utils.get_choices_for_user(p1)
         theme2 = utils.get_choices_for_user(p2)
         icon1 = theme1.get(m1, m1)
@@ -969,7 +969,7 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 for uid, pred in predictions.items():
                     if pred == win_move:
                         prediction_winners.append(int(uid))
-                        db.update_user(int(uid), points=db.get_user(int(uid))["points"] + config.PREDICTION_BONUS)
+                        users_engine.update_user(int(uid), points=users_engine.get_user(int(uid))["points"] + config.PREDICTION_BONUS)
 
             if result and result["players"]:
                 counts = result["counts"]
@@ -990,7 +990,7 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                         "user_id": uid_int,
                         "is_winner": is_winner,
                         "reward": base_reward + bonus,
-                        "clan": db.get_user(uid_int).get("clan") if db.get_user(uid_int) else None
+                        "clan": users_engine.get_user(uid_int).get("clan") if users_engine.get_user(uid_int) else None
                     })
 
                 channel_rewards.batch_process_channel_rewards_with_streak(chat_id, players_rewards, config.STREAK_BONUS)
@@ -1012,7 +1012,7 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 if current_event == "double_points":
                     text += "🎁 نقاط مضاعفة!\n"
                 if prediction_winners:
-                    names = ", ".join([db.get_user(uid)["first_name"] for uid in prediction_winners[:5]])
+                    names = ", ".join([users_engine.get_user(uid)["first_name"] for uid in prediction_winners[:5]])
                     text += f"🔮 توقع صحيح: {names} (+{config.PREDICTION_BONUS})\n"
                 if clan_scores:
                     sorted_clans = sorted(clan_scores.items(), key=lambda x: x[1], reverse=True)[:3]
@@ -1101,7 +1101,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    total_users = len(db.get_all_user_ids())
+    total_users = len(users_engine.get_all_user_ids())
     conn = sqlite3.connect("rps_bot.db")
     total_games = conn.execute("SELECT COUNT(*) FROM active_games").fetchone()[0]
     total_clans = conn.execute("SELECT COUNT(*) FROM clans").fetchone()[0]
@@ -1147,9 +1147,9 @@ async def massbattle_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     winners = db.get_mass_battle_results(battle_id)
     if winners:
         for uid in winners:
-            db.update_user(uid, points=db.get_user(uid)["points"] + config.MASS_BATTLE_REWARD[0],
-                           gems=db.get_user(uid).get("gems",0) + config.MASS_BATTLE_REWARD[1])
-        winner_names = ", ".join([db.get_user(uid)["first_name"] for uid in winners[:5]])
+            users_engine.update_user(uid, points=users_engine.get_user(uid)["points"] + config.MASS_BATTLE_REWARD[0],
+                           gems=users_engine.get_user(uid).get("gems",0) + config.MASS_BATTLE_REWARD[1])
+        winner_names = ", ".join([users_engine.get_user(uid)["first_name"] for uid in winners[:5]])
         await context.bot.send_message(chat_id, f"🎉 انتهت المعركة! الفائزون: {winner_names} (+{config.MASS_BATTLE_REWARD[0]} نقطة، +{config.MASS_BATTLE_REWARD[1]} جوهرة)")
     else:
         await context.bot.send_message(chat_id, "لم ينضم أحد للمعركة!")
@@ -1220,7 +1220,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if context.user_data.get("awaiting_broadcast"):
             broadcast_msg = update.message.text
             success, fail = 0, 0
-            for uid in db.get_all_user_ids():
+            for uid in users_engine.get_all_user_ids():
                 try:
                     await context.bot.send_message(uid, broadcast_msg)
                     success += 1
@@ -1236,7 +1236,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 uid = int(parts[0])
                 pts = int(parts[1])
                 gems = int(parts[2])
-                db.update_user(uid, points=pts, gems=gems)
+                users_engine.update_user(uid, points=pts, gems=gems)
                 await update.message.reply_text("تم التحديث")
             except:
                 await update.message.reply_text("صيغة خاطئة")
@@ -1255,7 +1255,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await handlers.process_join_clan(update, context)
         elif context.user_data.get("awaiting_friend_challenge"):
             username = msg.lstrip("@")
-            target = db.get_user_by_username(username)
+            target = users_engine.get_user_by_username(username)
             if not target:
                 await update.message.reply_text("المستخدم غير موجود.")
             else:
