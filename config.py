@@ -44,7 +44,6 @@ THEME_ICONS = THEMES
 DEFAULT_RATING = 1000
 RATING_K = 32
 
-# 🆕 نظام الرانكات (ELO Tiers)
 RATING_TIERS = [
     (0, 999, "برونز", "🥉"),
     (1000, 1199, "فضة", "🥈"),
@@ -81,3 +80,42 @@ THEMES_SHOP = [
     {"id": "theme_2", "name": "🌑 الظلال", "price": 150},
     {"id": "theme_4", "name": "💎 الكريستال", "price": 250},
 ]
+
+# 🆕 Daily Login Rewards
+DAILY_REWARDS = {
+    1: (10, 0),
+    2: (15, 0),
+    3: (20, 1),
+    4: (25, 0),
+    5: (30, 2),
+    6: (35, 0),
+    7: (50, 3)
+}
+
+# 🆕 Lucky Wheel
+WHEEL_REWARDS = [
+    ("points", 100, 0.15),
+    ("points", 200, 0.1),
+    ("points", 50, 0.25),
+    ("gems", 5, 0.2),
+    ("title", "محظوظ", 0.1),
+    ("theme", "theme_3", 0.1),
+    ("treasure_box", None, 0.1)
+]
+WHEEL_COST = 5  # جواهر
+
+# 🆕 Battle Pass
+MAX_BATTLE_PASS_LEVEL = 10
+BATTLE_PASS_XP_PER_LEVEL = 100
+BATTLE_PASS_REWARDS = {
+    1: {"free": ("points", 50), "premium": ("gems", 5)},
+    2: {"free": ("points", 75), "premium": ("title", "بطل الموسم")},
+    3: {"free": ("gems", 3), "premium": ("booster", "double_points_1h")},
+    4: {"free": ("points", 100), "premium": ("theme", "theme_4")},
+    5: {"free": ("treasure_box", None), "premium": ("gems", 10)},
+    6: {"free": ("points", 120), "premium": ("title", "مخضرم")},
+    7: {"free": ("gems", 5), "premium": ("booster", "shield_1h")},
+    8: {"free": ("points", 150), "premium": ("theme", "theme_2")},
+    9: {"free": ("treasure_box", None), "premium": ("gems", 15)},
+    10: {"free": ("points", 200), "premium": ("title", "أسطورة الموسم")}
+}
