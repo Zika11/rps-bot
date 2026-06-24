@@ -28,7 +28,7 @@ def smart_bot_choice(user_id):
     most_common = counter.most_common(1)[0][0]
     for k, v in WIN_MAP.items():
         if v == most_common: return k
-    return random.choice(list(CHOICES.keys())
+    return random.choice(list(CHOICES.keys()))   # <-- تم إصلاح القوس هنا
 
 def update_user_moves(user_id, move):
     u = db.get_user(user_id)
