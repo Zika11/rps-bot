@@ -9,27 +9,31 @@ logger = logging.getLogger(__name__)
 
 models.init_db()
 
-# ---------- المهام الدورية (JobQueue) ----------
-async def cleanup_stuck_games_job(context: ContextTypes.DEFAULT_TYPE):
-    try:
-        conn = sqlite3.connect("rps_bot.db")
-        cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
-        conn.execute("DELETE FROM active_games WHERE created_at < ?", (cutoff,))
-        conn.execute("DELETE FROM pending_matches")
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.error(f"خطأ في تنظيف الألعاب: {e}")
+# ---------- المهام الدورية (خلفية) ----------
+async def cleanup_stuck_games():
+    while True:
+        await asyncio.sleep(60)
+        try:
+            conn = sqlite3.connect("rps_bot.db")
+            cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
+            conn.execute("DELETE FROM active_games WHERE created_at < ?", (cutoff,))
+            conn.execute("DELETE FROM pending_matches")
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"خطأ في تنظيف الألعاب: {e}")
 
-async def auto_drops_job(context: ContextTypes.DEFAULT_TYPE):
-    if random.random() < config.DROP_CHANCE:
-        for chat_id in list(state.channel_settings.keys()):
-            reward = random.choice(config.DROP_REWARDS)
-            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎁 افتح الصندوق!", callback_data=f"claim_drop_{reward[0]}_{reward[1]}")]])
-            try:
-                await context.bot.send_message(chat_id, "💥 صندوق مفاجئ! أول واحد يضغط يربح:", reply_markup=keyboard)
-            except:
-                pass
+async def auto_drops(app):
+    while True:
+        await asyncio.sleep(600)
+        if random.random() < config.DROP_CHANCE:
+            for chat_id in list(state.channel_settings.keys()):
+                reward = random.choice(config.DROP_REWARDS)
+                keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎁 افتح الصندوق!", callback_data=f"claim_drop_{reward[0]}_{reward[1]}")]])
+                try:
+                    await app.bot.send_message(chat_id, "💥 صندوق مفاجئ! أول واحد يضغط يربح:", reply_markup=keyboard)
+                except:
+                    pass
 
 # ---------- أوامر أساسية ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1078,9 +1082,9 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # جدولة المهام الدورية باستخدام JobQueue
-    app.job_queue.run_repeating(cleanup_stuck_games_job, interval=60, first=10)
-    app.job_queue.run_repeating(auto_drops_job, interval=600, first=30)
+    # بدء المهام الدورية بعد أن يصبح event loop جاهزًا
+    asyncio.get_event_loop().create_task(cleanup_stuck_games())
+    asyncio.get_event_loop().create_task(auto_drops(app))
 
     logger.info("البوت يعمل...")
     app.run_polling()
