@@ -34,10 +34,10 @@ def game_mode_menu(lang="ar"):
     ]
     return InlineKeyboardMarkup([[InlineKeyboardButton(text, callback_data=data)] for text, data in modes])
 
-# ---------- أزرار الاختيار (حجر/ورقة/مقص) ----------
-def choice_buttons(game_type="solo"):
+# ---------- أزرار اختيار الحركة (تُرسل مع game_id) ----------
+def choice_buttons(game_type_and_id):
     from config import CHOICES
-    buttons = [InlineKeyboardButton(icon, callback_data=f"pick_{key}_{game_type}") for key, icon in CHOICES.items()]
+    buttons = [InlineKeyboardButton(icon, callback_data=f"pick_{game_type_and_id}_{key}") for key, icon in CHOICES.items()]
     return InlineKeyboardMarkup([buttons])
 
 # ---------- زر الرجوع ----------
@@ -80,7 +80,7 @@ def tournament_keyboard(tour_id):
         [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
     ])
 
-# ---------- 🆕 أزرار المجموعة ----------
+# ---------- أزرار المجموعة ----------
 def group_game_menu(chat_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎮 فردي ضد البوت", callback_data=f"group_solo_{chat_id}")],
@@ -90,14 +90,13 @@ def group_game_menu(chat_id):
         [InlineKeyboardButton("🔙 إغلاق", callback_data="delete_message")]
     ])
 
-# قبول التحدي المفتوح
 def open_challenge_accept_button(chat_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔥 اقبل التحدي!", callback_data=f"accept_open_{chat_id}")]
     ])
 
-# أزرار اختيار الحركة للمجموعة (تظهر في المجموعة)
-def group_choice_buttons(chat_id, player_id):
+# أزرار اختيار الحركة للمجموعة (مع game_id)
+def group_choice_buttons(chat_id, player_id, game_id):
     from config import CHOICES
-    buttons = [InlineKeyboardButton(icon, callback_data=f"group_pick_{key}_{chat_id}_{player_id}") for key, icon in CHOICES.items()]
+    buttons = [InlineKeyboardButton(icon, callback_data=f"group_pick_{key}_{chat_id}_{player_id}_{game_id}") for key, icon in CHOICES.items()]
     return InlineKeyboardMarkup([buttons])
