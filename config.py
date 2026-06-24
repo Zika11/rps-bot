@@ -112,3 +112,6 @@ EVENT_CHANCE = 0.3
 POSSIBLE_EVENTS = ["double_points", "shuffle", "boss", "ban_rock", "ban_paper", "ban_scissors", "reverse_win"]
 BANNED_MOVE_EVENTS = {"ban_rock": "rock", "ban_paper": "paper", "ban_scissors": "scissors"}
 PREDICTION_BONUS = 3
+
+# تجميد التصويت (ثواني)
+VOTE_FREEZE_SECONDS = 2
