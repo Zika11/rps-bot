@@ -6,6 +6,7 @@ import models, db, config, state, keyboards, game_logic, utils, handlers
 import engine.game_engine as game_engine
 import engine.state as channel_state
 import engine.users as users_engine
+import engine.economy as economy
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -219,6 +220,36 @@ async def market_sell_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     db.create_listing(user.id, item_type, item_id, price_type, price)
     await update.message.reply_text(f"تم عرض {item_type} {item_id} للبيع بـ {price} {price_type}")
 
+# ---------- اقتصاد (Shop / Buy) ----------
+async def shop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "🛒 **متجر RPS**\n\n"
+        "لشراء عنصر استخدم الأمر:\n"
+        "/buy <نوع> <معرف>\n\n"
+        "الأنواع المتاحة:\n"
+        "- booster (مثل: double_points_1h)\n"
+        "- title (مثل: title_king)\n"
+        "- theme (مثل: theme_2)\n"
+        "- frame (مثل: gold)\n"
+        "- ability (مثل: shield)\n\n"
+        "أمثلة:\n"
+        "/buy booster double_points_1h\n"
+        "/buy title title_legend\n"
+        "/buy frame gold"
+    )
+    await update.message.reply_text(text)
+
+async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text("استخدم: /buy <نوع> <معرف>\nمثال: /buy frame gold")
+        return
+    item_type = args[0].lower()
+    item_id = args[1]
+    success, msg = economy.buy_item(user.id, item_type, item_id)
+    await update.message.reply_text(msg)
+
 # ---------- أمر الويب ----------
 async def web_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -226,7 +257,7 @@ async def web_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     web_link = f"{base_url}/?chat={chat_id}"
     await update.message.reply_text(f"🔗 رابط اللعبة على الويب:\n{web_link}")
 
-# ---------- 🆕 أمر /game لفتح Mini App ----------
+# ---------- أمر /game لفتح Mini App ----------
 async def game_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("اضغط للعب:", reply_markup=keyboards.mini_app_button())
 
@@ -951,7 +982,7 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                     except: pass
                     raise
 
-            # 🌀 إنهاء الجولة عبر game_engine مع تمرير الحدث للفوضى
+            # إنهاء الجولة عبر game_engine مع تمرير الحدث للفوضى
             result = await game_engine.finish_round(chat_id, event=current_event)
 
             # حذف رسالة التوقع
@@ -1281,6 +1312,8 @@ def main():
     app.add_handler(CommandHandler("referral", referral_command))
     app.add_handler(CommandHandler("battlepass", battlepass_command))
     app.add_handler(CommandHandler("sell", market_sell_command))
+    app.add_handler(CommandHandler("shop", shop_command))
+    app.add_handler(CommandHandler("buy", buy_command))
     app.add_handler(CommandHandler("season", handlers.season_command))
     app.add_handler(CommandHandler("boss", handlers.boss_command))
     app.add_handler(CommandHandler("admin", admin_panel))
