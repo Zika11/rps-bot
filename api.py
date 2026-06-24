@@ -37,22 +37,29 @@ def get_round_status(chat_id: int):
     }
 
 @app.post("/vote")
-def submit_vote(data: VoteRequest):
-    success = voting.record_channel_vote(data.chat_id, data.user_id, data.move)
+async def submit_vote(data: VoteRequest):
+    # 🔒 استخدام القفل الخاص بالقناة لمنع السباق
+    lock = await state.get_vote_lock(data.chat_id)
+    async with lock:
+        success = voting.record_channel_vote(data.chat_id, data.user_id, data.move)
     if not success:
         raise HTTPException(status_code=400, detail="الجولة غير نشطة أو انتهت")
     return {"status": "vote registered"}
 
 @app.post("/predict")
-def submit_prediction(data: PredictionRequest):
-    success = voting.record_prediction(data.chat_id, data.user_id, data.predicted_move)
+async def submit_prediction(data: PredictionRequest):
+    lock = await state.get_vote_lock(data.chat_id)
+    async with lock:
+        success = voting.record_prediction(data.chat_id, data.user_id, data.predicted_move)
     if not success:
         raise HTTPException(status_code=400, detail="غير متاح")
     return {"status": "prediction registered"}
 
 @app.post("/finish_round/{chat_id}")
-def finish_round(chat_id: int):
-    result = voting.finish_channel_round(chat_id)
+async def finish_round(chat_id: int):
+    lock = await state.get_vote_lock(chat_id)
+    async with lock:
+        result = voting.finish_channel_round(chat_id)
     if result is None:
         raise HTTPException(status_code=404, detail="الجولة غير موجودة")
     return result
@@ -69,7 +76,6 @@ def leaderboard(chat_id: int, limit: int = 10):
     conn.close()
     return [{"name": r["first_name"], "points": r["points"]} for r in rows]
 
-# 🆕 نقطة نهاية للتحقق من بيانات تسجيل الدخول عبر Telegram
 @app.post("/auth/telegram")
 async def verify_telegram(data: dict):
     check_hash = data.pop("hash", None)
