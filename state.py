@@ -4,17 +4,25 @@ active_games = {}
 pending_matches = []
 active_locks = asyncio.Lock()
 
-# تحديات المشاهدة: مفتاح challenge_id، قيمة dict {players, group_id, moves, ...}
 spectate_challenges = {}
 spectate_lock = asyncio.Lock()
 
+group_game_sessions = {}
+group_session_lock = asyncio.Lock()
+
+# تحديات مفتوحة في القنوات
+open_challenges = {}
+open_challenge_lock = asyncio.Lock()
+
+# تتبع ألعاب المجموعة الفردية (لاعب -> بيانات)
+group_solo_games = {}
+
 async def add_pending(user_id):
-    """إضافة لاعب لقائمة الانتظار أو إرجاع الخصم لو فيه لاعب منتظر"""
     async with active_locks:
         if user_id in pending_matches:
-            return None  # بالفعل في الانتظار
+            return None
         if user_id in active_games:
-            return None  # مشغول بلعبة حالياً
+            return None
         if pending_matches:
             opp = pending_matches.pop(0)
             active_games[user_id] = {"type": "random", "opponent": opp}
@@ -22,10 +30,9 @@ async def add_pending(user_id):
             return opp
         else:
             pending_matches.append(user_id)
-            return True  # بانتظار خصم
+            return True
 
 async def remove_game(user_id):
-    """إزالة اللعبة من الذاكرة لكلا الطرفين إن وُجدا"""
     async with active_locks:
         game = active_games.pop(user_id, None)
         if game and game["type"] == "random":
