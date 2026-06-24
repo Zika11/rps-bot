@@ -563,7 +563,7 @@ def get_top_boss_damagers():
     conn.close()
     return [dict(r) for r in rows]
 
-# 🆕 --- قدرات ---
+# --- قدرات ---
 def get_ability_count(user_id, ability):
     conn = get_conn()
     row = conn.execute(f"SELECT {ability} FROM user_abilities WHERE user_id=?", (user_id,)).fetchone()
@@ -595,7 +595,7 @@ def buy_ability(user_id, ability):
     conn.close()
     return True
 
-# 🆕 --- Mass Battle ---
+# --- Mass Battle ---
 def start_mass_battle(chat_id):
     conn = get_conn()
     cur = conn.execute("INSERT INTO mass_battle (chat_id, start_time) VALUES (?, datetime('now'))", (chat_id,))
@@ -625,7 +625,7 @@ def get_mass_battle_results(battle_id):
     conn.close()
     return winners
 
-# 🆕 --- Team Battles ---
+# --- Team Battles ---
 def create_team_battle(chat_id, team1_name, team2_name):
     conn = get_conn()
     cur = conn.execute("INSERT INTO team_battles (chat_id, team1_name, team2_name) VALUES (?,?,?)",
@@ -647,3 +647,118 @@ def get_team_players(battle_id, team):
     rows = conn.execute("SELECT user_id FROM team_battle_players WHERE battle_id=? AND team=?", (battle_id, team)).fetchall()
     conn.close()
     return [r["user_id"] for r in rows]
+
+# --- Channel Voting Loop ---
+def start_channel_loop(chat_id, interval=60, ttl=30):
+    conn = get_conn()
+    conn.execute("""
+        INSERT OR REPLACE INTO channel_loop_state
+        (chat_id, active, interval_sec, ttl_sec, round_id, players_choice, round_start_time)
+        VALUES (?,1,?,?,0,'{}',datetime('now'))
+    """, (chat_id, interval, ttl))
+    conn.commit()
+    conn.close()
+
+def stop_channel_loop(chat_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM channel_loop_state WHERE chat_id=?", (chat_id,))
+    conn.commit()
+    conn.close()
+
+def get_channel_loop(chat_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM channel_loop_state WHERE chat_id=? AND active=1", (chat_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def record_channel_vote(chat_id, user_id, move):
+    conn = get_conn()
+    state = conn.execute("SELECT * FROM channel_loop_state WHERE chat_id=?", (chat_id,)).fetchone()
+    if not state or not state["active"]:
+        conn.close()
+        return False
+    choices = json.loads(state["players_choice"])
+    choices[str(user_id)] = move
+    conn.execute("UPDATE channel_loop_state SET players_choice=? WHERE chat_id=?", (json.dumps(choices), chat_id))
+    conn.commit()
+    conn.close()
+    return True
+
+def finish_channel_round(chat_id):
+    conn = get_conn()
+    state = conn.execute("SELECT * FROM channel_loop_state WHERE chat_id=?", (chat_id,)).fetchone()
+    if not state:
+        conn.close()
+        return None
+    choices = json.loads(state["players_choice"])
+    if not choices:
+        conn.close()
+        return {"players": {}, "counts": {}, "winners": [], "draw": False, "winning_moves": []}
+
+    from collections import Counter
+    moves = list(choices.values())
+    counts = dict(Counter(moves))
+    sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+
+    draw = False
+    winning_moves = []
+    if len(sorted_counts) >= 2 and sorted_counts[0][1] == sorted_counts[1][1]:
+        draw = True
+        top_count = sorted_counts[0][1]
+        winning_moves = [move for move, cnt in sorted_counts if cnt == top_count]
+    else:
+        winning_moves = [sorted_counts[0][0]]
+
+    winners = [uid for uid, mv in choices.items() if mv in winning_moves]
+
+    new_round = state["round_id"] + 1
+    conn.execute("UPDATE channel_loop_state SET round_id=?, players_choice='{}', round_start_time=datetime('now') WHERE chat_id=?",
+                 (new_round, chat_id))
+    conn.commit()
+    conn.close()
+
+    return {
+        "players": choices,
+        "counts": counts,
+        "winners": winners,
+        "winning_moves": winning_moves,
+        "draw": draw
+    }
+
+# --- Streak & Points ---
+def update_user_streak(chat_id, user_id, is_win):
+    conn = get_conn()
+    now = datetime.now().isoformat()
+    cur = conn.execute("SELECT streak FROM channel_user_streaks WHERE chat_id=? AND user_id=?", (chat_id, user_id))
+    row = cur.fetchone()
+    if not row:
+        streak = 1 if is_win else 0
+        conn.execute("INSERT INTO channel_user_streaks (chat_id, user_id, streak, last_vote_time) VALUES (?,?,?,?)",
+                     (chat_id, user_id, streak, now))
+    else:
+        if is_win:
+            streak = row["streak"] + 1
+        else:
+            streak = 0
+        conn.execute("UPDATE channel_user_streaks SET streak=?, last_vote_time=? WHERE chat_id=? AND user_id=?", 
+                     (streak, now, chat_id, user_id))
+    conn.commit()
+    conn.close()
+    return streak
+
+def add_channel_points(chat_id, user_id, amount):
+    conn = get_conn()
+    conn.execute("INSERT OR IGNORE INTO channel_user_points (chat_id, user_id, points) VALUES (?,?,0)", (chat_id, user_id))
+    conn.execute("UPDATE channel_user_points SET points = points + ? WHERE chat_id=? AND user_id=?", (amount, chat_id, user_id))
+    conn.commit()
+    conn.close()
+
+def get_channel_leaderboard(chat_id, limit=10):
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT u.first_name, c.points 
+        FROM channel_user_points c JOIN users u ON c.user_id = u.user_id
+        WHERE c.chat_id = ? ORDER BY c.points DESC LIMIT ?
+    """, (chat_id, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
