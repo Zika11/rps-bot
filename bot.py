@@ -223,7 +223,7 @@ async def market_sell_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def web_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """إرسال رابط الويب مع معرف القناة الحالية"""
     chat_id = update.effective_chat.id
-    base_url = "https://rps-web.vercel.app"  # ← استبدله برابط Vercel الفعلي
+    base_url = "https://rps-bot-six.vercel.app"  # ← تم تحديثه إلى رابط Vercel الفعلي
     web_link = f"{base_url}/?chat={chat_id}"
     await update.message.reply_text(f"🔗 رابط اللعبة على الويب:\n{web_link}")
 
