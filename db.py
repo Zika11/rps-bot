@@ -2,7 +2,7 @@ import sqlite3, json, logging, random
 from datetime import datetime, date, timedelta
 import config
 
-DB = "rps_bot.db"
+DB = config.DB_NAME
 
 def get_conn():
     conn = sqlite3.connect(DB)
