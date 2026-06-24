@@ -58,6 +58,7 @@ def shop_categories():
         [InlineKeyboardButton("🎡 عجلة الحظ", callback_data="wheel")],
         [InlineKeyboardButton("🖼️ إطارات", callback_data="frames_shop")],
         [InlineKeyboardButton("🏪 السوق", callback_data="market")],
+        [InlineKeyboardButton("🛡️ القدرات", callback_data="abilities_shop")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
     ])
 
@@ -152,7 +153,6 @@ def spectator_accept_button(room_id):
         [InlineKeyboardButton("👀 انضم كمشاهد", callback_data=f"spectate_join_{room_id}")]
     ])
 
-# 🆕 لوحة تحكم الأدمن التفاعلية
 def admin_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 إحصائيات", callback_data="admin_stats")],
@@ -161,4 +161,24 @@ def admin_menu():
         [InlineKeyboardButton("📺 إدارة القنوات", callback_data="admin_channels")],
         [InlineKeyboardButton("🔄 مسح المباريات", callback_data="admin_reset")],
         [InlineKeyboardButton("🚫 إغلاق", callback_data="delete_message")]
+    ])
+
+# 🆕 Mini Game Platform
+def abilities_shop():
+    from config import ABILITIES
+    buttons = []
+    for ab_id, data in ABILITIES.items():
+        buttons.append([InlineKeyboardButton(f"{data['icon']} {data['name']} - {data['cost']} نقطة", callback_data=f"buy_ability_{ab_id}")])
+    buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="shop")])
+    return InlineKeyboardMarkup(buttons)
+
+def mass_battle_start_button(chat_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚡ انضم للمعركة الجماعية", callback_data=f"mass_join_{chat_id}")],
+    ])
+
+def team_battle_team_buttons(battle_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔴 انضم للفريق الأحمر", callback_data=f"team_join_{battle_id}_red")],
+        [InlineKeyboardButton("🔵 انضم للفريق الأزرق", callback_data=f"team_join_{battle_id}_blue")],
     ])
