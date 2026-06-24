@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { getLeaderboard } from '../api'
 import TelegramLoginButton from '../components/TelegramLoginButton'
 
-const BOT_NAME = 'YOUR_BOT_USERNAME' // ← استبدله باسم مستخدم البوت
+const BOT_NAME = 'Zi_83bot'
 
 function Leaderboard() {
   const [searchParams] = useSearchParams()
