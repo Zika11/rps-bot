@@ -361,6 +361,7 @@ def init_db():
             ttl_sec INTEGER DEFAULT 30,
             round_id INTEGER DEFAULT 0,
             players_choice TEXT DEFAULT '{}',
+            predictions TEXT DEFAULT '{}',
             round_start_time TEXT
         )
     """)
