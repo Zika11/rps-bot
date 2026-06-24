@@ -3,8 +3,7 @@ from datetime import datetime, date, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 import models, db, config, state, keyboards, game_logic, utils, handlers
-import engine.voting as voting
-import engine.rewards as channel_rewards
+import engine.game_engine as game_engine
 import engine.state as channel_state
 import engine.users as users_engine
 
@@ -563,7 +562,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_reset":
         await admin_reset_games(update, context)
 
-    # تصويت القناة مع ملاحظات فورية
+    # تصويت القناة مع ملاحظات فورية (تستخدم game_engine)
     elif data.startswith("channel_vote_"):
         parts = data.split("_")
         chat_id = int(parts[2])
@@ -574,13 +573,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await channel_state.is_spam_vote(chat_id, user.id):
             await query.answer("أنت تصوت بسرعة كبيرة! انتظر ثانيتين.")
             return
-        lock = await channel_state.get_vote_lock(chat_id)
-        async with lock:
-            success = voting.record_channel_vote(chat_id, user.id, move)
+        success = await game_engine.vote(chat_id, user.id, move)
         if success:
             await query.answer(f"لقد اخترت {move}! ✅")
-            # تحديث رسالة الدعوة لاظهار عدد المصوتين
-            voter_count = voting.get_voter_count(chat_id)
+            voter_count = game_engine.get_voter_count(chat_id)
             try:
                 await context.bot.edit_message_text(
                     chat_id=chat_id,
@@ -601,7 +597,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"{i}. {r['first_name']} - {r['points']} نقطة\n"
         await query.edit_message_text(text)
 
-    # توقع حركة الفائز
     elif data.startswith("predict_"):
         parts = data.split("_")
         chat_id = int(parts[1])
@@ -612,9 +607,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await channel_state.is_spam_vote(chat_id, user.id):
             await query.answer("تم استلام توقعك بالفعل!")
             return
-        lock = await channel_state.get_vote_lock(chat_id)
-        async with lock:
-            success = voting.record_prediction(chat_id, user.id, predicted_move)
+        success = await game_engine.predict(chat_id, user.id, predicted_move)
         if success:
             await query.answer("تم تسجيل توقعك! 🔮")
         else:
@@ -884,7 +877,7 @@ async def process_spectate_pick(update, context, move, room_id):
         db.update_spectator_room(room_id, status="finished")
     await query.edit_message_text("تم تسجيل حركتك.")
 
-# ---------- حلقة التصويت التلقائي للقناة (تستخدم engine) ----------
+# ---------- حلقة التصويت التلقائي للقناة (تستخدم game_engine) ----------
 async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
     last_message_id = None
 
@@ -914,7 +907,7 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 banned = config.BANNED_MOVE_EVENTS[current_event]
                 event_text = f"🚫 حدث: {banned} محظور هذه الجولة!"
 
-            end_str = voting.start_channel_loop(chat_id, interval, ttl)
+            end_str = await game_engine.start_round(chat_id, interval, ttl)
             end_dt = datetime.fromisoformat(end_str)
 
             try:
@@ -952,17 +945,15 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                     except: pass
                     raise
 
-            # قفل القناة لإنهاء الجولة
-            lock = await channel_state.get_vote_lock(chat_id)
-            async with lock:
-                result = voting.finish_channel_round(chat_id)
+            # إنهاء الجولة عبر game_engine
+            result = await game_engine.finish_round(chat_id)
 
             # حذف رسالة التوقع
             try: await context.bot.delete_message(chat_id, pred_message_id)
             except: pass
 
             # معالجة التوقعات
-            predictions = voting.get_predictions(chat_id)
+            predictions = game_engine.get_predictions(chat_id)
             prediction_winners = []
             if predictions and result and result["winning_moves"]:
                 win_move = result["winning_moves"][0]
@@ -993,7 +984,7 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                         "clan": users_engine.get_user(uid_int).get("clan") if users_engine.get_user(uid_int) else None
                     })
 
-                channel_rewards.batch_process_channel_rewards_with_streak(chat_id, players_rewards, config.STREAK_BONUS)
+                game_engine.process_rewards(chat_id, players_rewards)
 
                 clan_scores = {}
                 for p in players_rewards:
