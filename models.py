@@ -352,19 +352,29 @@ def init_db():
         )
     """)
 
-    # جلسات القناة للتصويت الآلي
+    # جلسات القناة للتصويت الآلي (بها عمود status و end_time)
     c.execute("""
         CREATE TABLE IF NOT EXISTS channel_loop_state (
             chat_id INTEGER PRIMARY KEY,
             active INTEGER DEFAULT 1,
+            status TEXT DEFAULT 'WAITING',
             interval_sec INTEGER DEFAULT 60,
             ttl_sec INTEGER DEFAULT 30,
             round_id INTEGER DEFAULT 0,
             players_choice TEXT DEFAULT '{}',
             predictions TEXT DEFAULT '{}',
-            round_start_time TEXT
+            round_start_time TEXT,
+            end_time TEXT
         )
     """)
+    try:
+        c.execute("ALTER TABLE channel_loop_state ADD COLUMN status TEXT DEFAULT 'WAITING'")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE channel_loop_state ADD COLUMN end_time TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     # متابعة الـ Streak لكل لاعب في كل قناة
     c.execute("""
