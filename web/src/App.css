@@ -1,0 +1,19 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a2e; color: #eee; }
+.app { min-height: 100vh; display: flex; flex-direction: column; }
+.navbar { display: flex; justify-content: space-between; align-items: center; padding: 1rem 2rem; background: #16213e; }
+.logo { font-size: 1.5rem; font-weight: bold; color: #e94560; text-decoration: none; }
+.nav-links a { margin: 0 1rem; color: #eee; text-decoration: none; font-weight: 500; }
+.nav-links a:hover { color: #e94560; }
+.container { flex: 1; padding: 2rem; }
+.card { background: #0f3460; border-radius: 12px; padding: 2rem; margin: 1rem 0; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+.btn { display: inline-block; padding: 0.75rem 1.5rem; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; font-weight: bold; text-decoration: none; }
+.btn-primary { background: #e94560; color: white; }
+.btn-primary:hover { background: #c23152; }
+.moves { display: flex; gap: 1rem; margin: 1rem 0; }
+.move-btn { flex: 1; padding: 1.5rem; font-size: 2rem; border: 2px solid #e94560; border-radius: 12px; background: transparent; color: #e94560; cursor: pointer; transition: all 0.2s; }
+.move-btn:hover { background: #e94560; color: white; }
+.move-btn.selected { background: #e94560; color: white; }
+.move-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.leaderboard { list-style: none; }
+.leaderboard li { padding: 0.5rem 1rem; background: #16213e; margin: 0.5rem 0; border-radius: 8px; display: flex; justify-content: space-between; }
