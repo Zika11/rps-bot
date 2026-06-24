@@ -10,12 +10,15 @@ spectate_lock = asyncio.Lock()
 group_game_sessions = {}
 group_session_lock = asyncio.Lock()
 
-# تحديات مفتوحة في القنوات
 open_challenges = {}
 open_challenge_lock = asyncio.Lock()
 
 # تتبع ألعاب المجموعة الفردية (لاعب -> بيانات)
 group_solo_games = {}
+
+# 🆕 إعدادات القنوات (مفتاح chat_id، قيمة dict {interval, ttl, task, message_id})
+channel_settings = {}
+channel_settings_lock = asyncio.Lock()
 
 async def add_pending(user_id):
     async with active_locks:
