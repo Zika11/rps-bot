@@ -18,3 +18,12 @@ export async function getLeaderboard(chatId) {
   const res = await fetch(`${API_BASE}/leaderboard/${chatId}`)
   return res.json()
 }
+
+export async function verifyTelegramUser(userData) {
+  const res = await fetch(`${API_BASE}/auth/telegram`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(userData)
+  })
+  return res.json()
+}
