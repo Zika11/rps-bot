@@ -125,7 +125,7 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                                     chat_id=chat_id,
                                     message_id=invite_message_id,
                                     text=text,
-                                    reply_markup=keyboards.rps_keyboard()
+                                    reply_markup=keyboards.dynamic_rps_keyboard(stats['counts'])
                                 )
                             except: pass
                         await asyncio.sleep(3)
