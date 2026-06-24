@@ -6,6 +6,7 @@ import db
 from config import *
 from keyboards import *
 from game_logic import *
+from state import active_games_lock, active_games
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -50,7 +51,6 @@ async def start_tournament(t, context):
             name2 = u2["name"] if u2 else "لاعب"
             await context.bot.send_message(int(players[i]), f"🏆 مباراتك في البطولة ضد {name2}!")
             await context.bot.send_message(int(players[i+1]), f"🏆 مباراتك في البطولة ضد {name1}!")
-            from bot import active_games_lock, active_games
             async with active_games_lock:
                 game_id = f"t_{players[i]}_{players[i+1]}"
                 active_games[game_id] = {
@@ -97,7 +97,6 @@ async def handle_tournament_match_result(game, winner_id, context):
             next_round = []
             for i in range(0, len(winners), 2):
                 next_round.append({"p1": winners[i], "p2": winners[i+1], "winner": None, "status": "pending"})
-                from bot import active_games_lock, active_games
                 async with active_games_lock:
                     game_id = f"t_{winners[i]}_{winners[i+1]}"
                     u1 = db.get_user(int(winners[i]))
