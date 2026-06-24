@@ -556,6 +556,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if move not in ["rock", "paper", "scissors"]:
             await query.answer("حركة غير صالحة!")
             return
+        # منع التصويت المتكرر
+        if await state.is_spam_vote(chat_id, user.id):
+            await query.answer("أنت تصوت بسرعة كبيرة! انتظر ثانيتين.")
+            return
         lock = await state.get_vote_lock(chat_id)
         async with lock:
             success = db.record_channel_vote(chat_id, user.id, move)
@@ -571,6 +575,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i, r in enumerate(top, 1):
             text += f"{i}. {r['first_name']} - {r['points']} نقطة\n"
         await query.edit_message_text(text)
+
+    # توقع حركة الفائز
+    elif data.startswith("predict_"):
+        parts = data.split("_")
+        chat_id = int(parts[1])
+        predicted_move = parts[2]
+        if predicted_move not in ["rock", "paper", "scissors"]:
+            await query.answer("حركة غير صالحة!")
+            return
+        if await state.is_spam_vote(chat_id, user.id):
+            await query.answer("تم استلام توقعك بالفعل!")
+            return
+        lock = await state.get_vote_lock(chat_id)
+        async with lock:
+            success = db.record_prediction(chat_id, user.id, predicted_move)
+        if success:
+            await query.answer("تم تسجيل توقعك! 🔮")
+        else:
+            await query.answer("التوقع غير متاح الآن.")
 
 # ---------- دوال اللعب الأساسية ----------
 async def process_solo_pick(update, context, move, game_id):
@@ -836,13 +859,15 @@ async def process_spectate_pick(update, context, move, room_id):
         db.update_spectator_room(room_id, status="finished")
     await query.edit_message_text("تم تسجيل حركتك.")
 
-# ---------- حلقة التصويت التلقائي للقناة ----------
+# ---------- حلقة التصويت التلقائي للقناة (Watchdog + Per-Channel Lock) ----------
 async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
     last_message_id = None
-    try:
-        while True:
+
+    while state.channel_settings.get(chat_id):
+        try:
             settings = state.channel_settings.get(chat_id)
-            if not settings: break
+            if not settings:
+                break
             interval = settings.get("interval", 60)
             ttl = settings.get("ttl", 30)
 
@@ -860,6 +885,9 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
             if current_event == "double_points": event_text = "🎁 حدث: نقاط مضاعفة!"
             elif current_event == "shuffle": event_text = "🌀 حدث: خلط الأصوات!"
             elif current_event == "boss": event_text = "🐉 حدث: الزعيم يشارك!"
+            elif current_event in config.BANNED_MOVE_EVENTS:
+                banned = config.BANNED_MOVE_EVENTS[current_event]
+                event_text = f"🚫 حدث: {banned} محظور هذه الجولة!"
 
             db.start_channel_loop(chat_id, interval, ttl)
             try:
@@ -869,49 +897,85 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=keyboards.channel_vote_buttons(chat_id)
                 )
                 invite_message_id = msg.message_id
+                # إرسال أزرار التوقع
+                pred_msg = await context.bot.send_message(
+                    chat_id,
+                    "🔮 توقع الحركة الفائزة:",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("👊", callback_data=f"predict_{chat_id}_rock"),
+                         InlineKeyboardButton("✋", callback_data=f"predict_{chat_id}_paper"),
+                         InlineKeyboardButton("✌️", callback_data=f"predict_{chat_id}_scissors")]
+                    ])
+                )
+                pred_message_id = pred_msg.message_id
             except Exception as e:
                 logger.error(f"خطأ في جولة القناة {chat_id}: {e}")
-                break
+                await asyncio.sleep(5)
+                continue
 
             try: await asyncio.sleep(interval)
             except asyncio.CancelledError:
                 try: await context.bot.delete_message(chat_id, invite_message_id)
                 except: pass
-                break
+                try: await context.bot.delete_message(chat_id, pred_message_id)
+                except: pass
+                raise
 
+            # قفل القناة لإنهاء الجولة
             lock = await state.get_vote_lock(chat_id)
             async with lock:
                 result = db.finish_channel_round(chat_id)
+
+            # حذف رسالة التوقع
+            try: await context.bot.delete_message(chat_id, pred_message_id)
+            except: pass
+
+            # معالجة التوقعات
+            predictions = db.get_predictions(chat_id)
+            prediction_winners = []
+            if predictions and result and result["winning_moves"]:
+                win_move = result["winning_moves"][0]  # أول حركة فائزة
+                for uid, pred in predictions.items():
+                    if pred == win_move:
+                        prediction_winners.append(int(uid))
+                        db.update_user(int(uid), points=db.get_user(int(uid))["points"] + config.PREDICTION_BONUS)
 
             if result and result["players"]:
                 counts = result["counts"]
                 winners = result["winners"]
                 winning = ", ".join(result["winning_moves"])
                 is_draw = result["draw"]
-
                 bot_move = utils.markov_bot_choice(0)
-                clan_scores = {}
+
+                # تجميع بيانات المكافآت
+                players_rewards = []
                 for uid, move in result["players"].items():
                     uid_int = int(uid)
-                    user = db.get_user(uid_int) or {"points": 0, "clan": None}
                     is_winner = uid_int in winners
-
-                    streak = db.update_user_streak(chat_id, uid_int, is_winner)
-                    if is_winner:
-                        reward = config.CHANNEL_LOOP_REWARDS["draw"] if is_draw else config.CHANNEL_LOOP_REWARDS["win"]
-                    else:
-                        reward = config.CHANNEL_LOOP_REWARDS["loss"]
+                    base_reward = config.CHANNEL_LOOP_REWARDS["draw"] if is_draw else config.CHANNEL_LOOP_REWARDS["win"] if is_winner else config.CHANNEL_LOOP_REWARDS["loss"]
                     if current_event == "double_points":
-                        reward *= 2
-                    if streak > 1 and is_winner:
-                        reward += config.STREAK_BONUS * streak
-                    if move == bot_move:
-                        reward += 5
-                    db.update_user(uid_int, points=user["points"] + reward)
-                    db.add_channel_points(chat_id, uid_int, reward)
-                    clan = user.get("clan")
-                    if clan:
-                        clan_scores[clan] = clan_scores.get(clan, 0) + reward
+                        base_reward *= 2
+                    bonus = 5 if move == bot_move else 0
+                    players_rewards.append({
+                        "user_id": uid_int,
+                        "is_winner": is_winner,
+                        "reward": base_reward + bonus,
+                        "clan": db.get_user(uid_int).get("clan") if db.get_user(uid_int) else None
+                    })
+
+                # دفعة واحدة
+                db.batch_process_channel_rewards_with_streak(chat_id, players_rewards, config.STREAK_BONUS)
+
+                # نقاط العشائر
+                clan_scores = {}
+                for p in players_rewards:
+                    if p["clan"]:
+                        clan_scores[p["clan"]] = clan_scores.get(p["clan"], 0) + p["reward"]
+
+                # حذف اللاعبين الذين اختاروا حركة محظورة من النتائج (لم يحصلوا على نقاط)
+                if current_event in config.BANNED_MOVE_EVENTS:
+                    banned_move = config.BANNED_MOVE_EVENTS[current_event]
+                    # نزيلهم من valid_choices (لكن لم نعد نملكهم هنا، يمكن تطبيقه في finish_channel_round لاحقاً)
 
                 text = "📊 **نتائج الجولة:**\n"
                 for move, cnt in counts.items():
@@ -924,35 +988,38 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                     text += f"عدد الفائزين: {len(winners)}\n"
                 if current_event == "double_points":
                     text += "🎁 نقاط مضاعفة!\n"
-
+                if prediction_winners:
+                    names = ", ".join([db.get_user(uid)["first_name"] for uid in prediction_winners[:5]])
+                    text += f"🔮 توقع صحيح: {names} (+{config.PREDICTION_BONUS})\n"
                 if clan_scores:
                     sorted_clans = sorted(clan_scores.items(), key=lambda x: x[1], reverse=True)[:3]
                     text += "\n🏰 **ترتيب العشائر:**\n"
                     for i, (clan, score) in enumerate(sorted_clans, 1):
                         text += f"{i}. {clan} - {score} نقطة\n"
-
                 text += "\nاضغط لرؤية قائمة الأفضل:"
             else:
                 text = "لم يشارك أحد في هذه الجولة."
 
             try:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=invite_message_id,
-                    text=text,
-                    reply_markup=keyboards.channel_leaderboard_button(chat_id)
-                )
+                await context.bot.edit_message_text(chat_id=chat_id, message_id=invite_message_id, text=text, reply_markup=keyboards.channel_leaderboard_button(chat_id))
                 last_message_id = invite_message_id
             except:
                 msg = await context.bot.send_message(chat_id, text, reply_markup=keyboards.channel_leaderboard_button(chat_id))
                 last_message_id = msg.message_id
 
             try: await asyncio.sleep(5)
-            except asyncio.CancelledError: break
-    finally:
-        async with state.channel_settings_lock:
-            if chat_id in state.channel_settings:
-                del state.channel_settings[chat_id]
+            except asyncio.CancelledError: raise
+
+        except asyncio.CancelledError:
+            logger.info(f"تم إلغاء حلقة القناة {chat_id}")
+            break
+        except Exception as e:
+            logger.error(f"خطأ غير متوقع في حلقة القناة {chat_id}: {e}")
+            await asyncio.sleep(5)
+
+    async with state.channel_settings_lock:
+        if chat_id in state.channel_settings:
+            del state.channel_settings[chat_id]
 
 # ---------- أوامر القناة ----------
 async def start_channel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1179,7 +1246,6 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
     await context.bot.send_message(chat_id, "🎮 تم تفعيل اللعب! يمكنك الضغط على الأزرار أدناه:", reply_markup=keyboards.group_game_menu(chat_id))
 
 async def start_channel_game_cycle(chat_id, context: ContextTypes.DEFAULT_TYPE):
-    # هذا هو الروتين القديم للجروبات (اختياري)، يمكن إزالته أو استبداله
     pass
 
 # ---------- تشغيل البوت ----------
