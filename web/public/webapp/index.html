@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RPS Mini App</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--tg-theme-bg-color, #1a1a2e);
+            color: var(--tg-theme-text-color, #eee);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+        .container {
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+        h1 { font-size: 2rem; margin-bottom: 0.5rem; color: var(--tg-theme-button-color, #e94560); }
+        .status { background: var(--tg-theme-secondary-bg-color, #16213e); border-radius: 12px; padding: 1rem; margin: 1rem 0; font-size: 1rem; }
+        .moves { display: flex; gap: 1rem; justify-content: center; margin: 1.5rem 0; }
+        .move-btn {
+            flex: 1; padding: 1.5rem; font-size: 2.5rem;
+            border: 2px solid var(--tg-theme-button-color, #e94560);
+            border-radius: 16px; background: transparent;
+            color: var(--tg-theme-button-color, #e94560);
+            cursor: pointer; transition: all 0.2s;
+        }
+        .move-btn:active { background: var(--tg-theme-button-color, #e94560); color: white; transform: scale(0.95); }
+        .move-btn.selected { background: var(--tg-theme-button-color, #e94560); color: white; }
+        .move-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .confirm-btn {
+            width: 100%; padding: 1rem; font-size: 1.2rem; font-weight: bold;
+            border: none; border-radius: 12px;
+            background: var(--tg-theme-button-color, #e94560);
+            color: var(--tg-theme-button-text-color, white);
+            cursor: pointer; margin-top: 0.5rem;
+        }
+        .confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .message { margin-top: 1rem; padding: 0.5rem; border-radius: 8px; background: var(--tg-theme-hint-color, #0f3460); }
+        .auth-btn { padding: 0.75rem 1.5rem; font-size: 1rem; border: none; border-radius: 8px; background: var(--tg-theme-button-color, #e94560); color: white; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>✊ ✋ ✌️</h1>
+        <p>حجر ورقة مقص</p>
+
+        <div id="login-section">
+            <button class="auth-btn" onclick="loginWithTelegram()">تسجيل الدخول للمشاركة</button>
+        </div>
+
+        <div id="game-section" style="display: none;">
+            <div class="status" id="round-status">جاري التحميل...</div>
+            <div class="moves">
+                <button class="move-btn" onclick="selectMove('rock')">👊</button>
+                <button class="move-btn" onclick="selectMove('paper')">✋</button>
+                <button class="move-btn" onclick="selectMove('scissors')">✌️</button>
+            </div>
+            <button class="confirm-btn" id="confirm-btn" disabled onclick="submitVote()">تأكيد الاختيار</button>
+            <div class="message" id="message"></div>
+        </div>
+    </div>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+        const API_BASE = 'https://rps-bot-production-50cc.up.railway.app';
+        let tg = window.Telegram.WebApp;
+        let selectedMove = null;
+        let chatId = null;
+
+        tg.ready();
+        tg.expand();
+
+        // استخراج chat_id من المعلمات أو من initData
+        const params = new URLSearchParams(window.location.search);
+        chatId = params.get('chat');
+        if (!chatId && tg.initDataUnsafe?.start_param) {
+            chatId = tg.initDataUnsafe.start_param;
+        }
+
+        async function loginWithTelegram() {
+            const initData = tg.initData;
+            if (!initData) {
+                document.getElementById('message').innerText = 'تعذر تسجيل الدخول';
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE}/auth/telegram`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ initData })
+                });
+                const data = await response.json();
+                if (data.valid) {
+                    document.getElementById('login-section').style.display = 'none';
+                    document.getElementById('game-section').style.display = 'block';
+                    loadRoundStatus();
+                    setInterval(loadRoundStatus, 3000);
+                } else {
+                    document.getElementById('message').innerText = 'فشل التحقق';
+                }
+            } catch (e) {
+                document.getElementById('message').innerText = 'خطأ في الاتصال';
+            }
+        }
+
+        async function loadRoundStatus() {
+            if (!chatId) { document.getElementById('round-status').innerText = 'لم يتم تحديد قناة'; return; }
+            try {
+                const res = await fetch(`${API_BASE}/round/${chatId}`);
+                const data = await res.json();
+                if (data.status === 'ACTIVE') {
+                    document.getElementById('round-status').innerHTML = `✅ الجولة مفتوحة<br>👥 عدد المصوتين: ${data.players_count || 0}`;
+                    document.querySelectorAll('.move-btn').forEach(b => b.disabled = false);
+                } else {
+                    document.getElementById('round-status').innerText = 'لا توجد جولة نشطة حالياً';
+                    document.querySelectorAll('.move-btn').forEach(b => b.disabled = true);
+                }
+            } catch (e) {
+                document.getElementById('round-status').innerText = 'خطأ في تحميل الحالة';
+            }
+        }
+
+        function selectMove(move) {
+            selectedMove = move;
+            document.querySelectorAll('.move-btn').forEach(b => b.classList.remove('selected'));
+            document.querySelector(`.move-btn[onclick="selectMove('${move}')"]`).classList.add('selected');
+            document.getElementById('confirm-btn').disabled = false;
+        }
+
+        async function submitVote() {
+            if (!selectedMove || !chatId) return;
+            const userId = tg.initDataUnsafe?.user?.id;
+            if (!userId) { document.getElementById('message').innerText = 'يرجى تسجيل الدخول'; return; }
+            try {
+                const res = await fetch(`${API_BASE}/vote`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: parseInt(chatId), user_id: userId, move: selectedMove })
+                });
+                const data = await res.json();
+                if (data.status === 'vote registered') {
+                    document.getElementById('message').innerText = '✅ تم تسجيل تصويتك!';
+                    selectedMove = null;
+                    document.querySelectorAll('.move-btn').forEach(b => b.classList.remove('selected'));
+                    document.getElementById('confirm-btn').disabled = true;
+                    loadRoundStatus();
+                } else {
+                    document.getElementById('message').innerText = 'فشل التصويت';
+                }
+            } catch (e) {
+                document.getElementById('message').innerText = 'خطأ في الاتصال';
+            }
+        }
+
+        // تسجيل الدخول تلقائي إذا كان المستخدم معروفاً
+        if (tg.initDataUnsafe?.user) {
+            loginWithTelegram();
+        }
+    </script>
+</body>
+</html>
