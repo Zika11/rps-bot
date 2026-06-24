@@ -174,11 +174,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # اختيار الحركات
     elif data.startswith("pick_"):
+        # الصيغة: pick_{game_type}_{game_id}_{move}
         parts = data.split("_", 2)
         if len(parts) < 3: return
         game_type = parts[1]
         tail = parts[2]
-        move, game_id = tail.split("_", 1)
+        try:
+            game_id, move = tail.rsplit("_", 1)
+        except ValueError:
+            return
         if move not in ["rock", "paper", "scissors"]:
             await query.answer("حركة غير صالحة!")
             return
@@ -186,9 +190,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await process_solo_pick(update, context, move, game_id)
         elif game_type == "random":
             await process_random_pick(update, context, move, game_id)
-        elif game_type.startswith("spectate"):
-            challenge_id = tail
-            await process_spectate_move(update, context, move, challenge_id)
     elif data.startswith("group_pick_"):
         parts = data.split("_")
         move = parts[2]
@@ -259,7 +260,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("reject_challenge_"):
         await handlers.reject_challenge(update, context)
 
-# ---------- دوال اللعب الجديدة (مع state) ----------
+# ---------- دوال اللعب (Solo & Random) ----------
 async def process_solo_pick(update, context, move, game_id):
     query = update.callback_query
     user = query.from_user
@@ -293,7 +294,6 @@ async def process_random_pick(update, context, move, game_id):
         m2 = moves[str(p2)]
         res1 = game_logic.get_result(m1, m2)
         res2 = game_logic.get_result(m2, m1)
-        # تحديث النقاط
         db.apply_game_result(p1, res1, m1, p2)
         db.apply_game_result(p2, res2, m2, p1)
         utils.update_user_moves(p1, m1)
@@ -304,13 +304,34 @@ async def process_random_pick(update, context, move, game_id):
         icon2 = theme2.get(m2, m2)
         text = f"⚔️ {db.get_user(p1)['first_name']} اختار {icon1} vs {db.get_user(p2)['first_name']} اختار {icon2}\nالنتيجة: {res1} لصالح {db.get_user(p1)['first_name']}"
         await query.edit_message_text(text)
-        # الخصم الثاني يرسل له النتيجة
         try:
             await context.bot.send_message(p2, text)
         except: pass
         await state.remove_game(game_id)
     else:
         await query.edit_message_text("تم تسجيل حركتك، بانتظار الخصم...")
+
+async def process_spock_move(update, context, move):
+    query = update.callback_query
+    user = query.from_user
+    from config import SPOCK_CHOICES, SPOCK_WIN_MAP
+    bot_move = random.choice(list(SPOCK_CHOICES.keys()))
+    if move == bot_move:
+        result = "draw"
+    elif bot_move in SPOCK_WIN_MAP[move]:
+        result = "win"
+    else:
+        result = "loss"
+    # نستخدم نظام اللعبة الفردي المؤقت
+    game_id = state.start_solo_game(user.id)
+    db.apply_game_result(user.id, result, move, None)
+    utils.update_user_moves(user.id, move)
+    theme = utils.get_choices_for_user(user.id)
+    user_icon = theme.get(move, move)
+    bot_icon = theme.get(bot_move, bot_move)
+    text = f"أنت: {user_icon} vs البوت: {bot_icon}\nالنتيجة: {result}"
+    await query.edit_message_text(text)
+    state.finish_solo_game(game_id)
 
 # ---------- ألعاب المجموعة الفردية ----------
 async def process_group_solo_pick(update, context, move, chat_id, player_id, game_id):
@@ -342,7 +363,163 @@ async def process_group_solo_pick(update, context, move, chat_id, player_id, gam
     state.group_solo_games.pop(player_id, None)
     await query.answer("تم إرسال النتيجة إلى المجموعة.")
 
-# ... (باقي دوال التحدي المفتوح، دورة القناة، إلخ - ستبقى كما هي دون تغيير)
+# ---------- التحدي المفتوح ----------
+async def start_open_challenge(update, context, chat_id):
+    query = update.callback_query
+    user = query.from_user
+    async with state.open_challenge_lock:
+        if chat_id in state.open_challenges:
+            await query.answer("يوجد بالفعل تحدي مفتوح في هذه المجموعة!")
+            return
+        await context.bot.send_message(user.id, "اختر حركتك للتحدي المفتوح:", reply_markup=keyboards.choice_buttons(f"open_{chat_id}_temp"))
+        state.open_challenges[chat_id] = {"initiator": user.id, "move": None, "message_id": None}
+    await query.answer("تم إرسال خيارات الحركة في الخاص.")
+
+async def process_open_pick(update, context, move, chat_id):
+    query = update.callback_query
+    user = query.from_user
+    async with state.open_challenge_lock:
+        challenge = state.open_challenges.get(chat_id)
+        if not challenge or challenge["initiator"] != user.id:
+            await query.edit_message_text("لا يوجد تحدي بهذا المعرف.")
+            return
+        challenge["move"] = move
+        await query.edit_message_text("تم اختيار حركتك. سيتم الإعلان في المجموعة...")
+        msg = await context.bot.send_message(chat_id, f"🎯 **تحدي مفتوح!**\n{user.first_name} اختار حركته.\nمن يقبل التحدي؟", reply_markup=keyboards.open_challenge_accept_button(chat_id))
+        challenge["message_id"] = msg.message_id
+        asyncio.create_task(auto_cancel_open_challenge(chat_id, context))
+
+async def auto_cancel_open_challenge(chat_id, context):
+    await asyncio.sleep(60)
+    async with state.open_challenge_lock:
+        challenge = state.open_challenges.get(chat_id)
+        if challenge:
+            try:
+                await context.bot.edit_message_text(chat_id, challenge["message_id"], text="⏰ انتهت صلاحية التحدي المفتوح.")
+            except: pass
+            state.open_challenges.pop(chat_id, None)
+
+async def accept_open_challenge(update, context, chat_id):
+    query = update.callback_query
+    user = query.from_user
+    async with state.open_challenge_lock:
+        challenge = state.open_challenges.get(chat_id)
+        if not challenge:
+            await query.answer("انتهى التحدي أو غير موجود.")
+            return
+        if user.id == challenge["initiator"]:
+            await query.answer("لا يمكنك تحدي نفسك!")
+            return
+        challenge["acceptor"] = user.id
+        await context.bot.send_message(user.id, "اختر حركتك:", reply_markup=keyboards.choice_buttons(f"open_accept_{chat_id}_temp"))
+    await query.answer("تم قبول التحدي! اختر حركتك في الخاص.")
+
+async def process_open_acceptor_pick(update, context, move, chat_id):
+    query = update.callback_query
+    user = query.from_user
+    async with state.open_challenge_lock:
+        challenge = state.open_challenges.get(chat_id)
+        if not challenge or challenge.get("acceptor") != user.id:
+            await query.edit_message_text("لا يمكنك الرد على هذا التحدي.")
+            return
+        initiator_id = challenge["initiator"]
+        initiator_move = challenge["move"]
+        if not initiator_move:
+            await query.edit_message_text("لم يتم تحديد حركة البادئ بعد.")
+            return
+        result_init = game_logic.get_result(initiator_move, move)
+        db.apply_game_result(initiator_id, result_init, initiator_move, user.id)
+        result_acceptor = "loss" if result_init == "win" else ("win" if result_init == "loss" else "draw")
+        db.apply_game_result(user.id, result_acceptor, move, initiator_id)
+        u1 = db.get_user(initiator_id)
+        u2 = db.get_user(user.id)
+        theme1 = utils.get_choices_for_user(initiator_id)
+        theme2 = utils.get_choices_for_user(user.id)
+        icon1 = theme1.get(initiator_move, initiator_move)
+        icon2 = theme2.get(move, move)
+        winner = f"🏆 فاز {u1['first_name']}!" if result_init == "win" else (f"🏆 فاز {u2['first_name']}!" if result_acceptor == "win" else "🤝 تعادل!")
+        text = f"⚔️ **نتيجة التحدي المفتوح**\n{u1['first_name']} اختار {icon1}\n{u2['first_name']} اختار {icon2}\n{winner}"
+        await context.bot.send_message(chat_id, text)
+        try: await context.bot.delete_message(chat_id, challenge["message_id"])
+        except: pass
+        state.open_challenges.pop(chat_id, None)
+    await query.edit_message_text("تم إرسال النتيجة إلى المجموعة.")
+
+# ---------- دورة اللعب التلقائي للقنوات والمجموعات ----------
+async def start_channel_game_cycle(chat_id, context: ContextTypes.DEFAULT_TYPE):
+    while True:
+        async with state.channel_settings_lock:
+            settings = state.channel_settings.get(chat_id)
+            if not settings: break
+            interval = settings.get("interval", 120)
+            ttl = settings.get("ttl", 60)
+        async with state.group_session_lock:
+            session = {"players": set(), "task": asyncio.current_task()}
+            state.group_game_sessions[chat_id] = session
+        try:
+            msg = await context.bot.send_message(chat_id, "🎮 **بدأت جولة جديدة!** (تنتهي قريباً)\nاختر نمط لعبك أو انضم للعشوائي:", reply_markup=keyboards.group_game_menu(chat_id))
+            async with state.channel_settings_lock:
+                if chat_id in state.channel_settings:
+                    state.channel_settings[chat_id]["message_id"] = msg.message_id
+            # جدولة حذف الرسالة
+            async def delete_after(chat_id, msg_id, delay):
+                await asyncio.sleep(delay)
+                try: await context.bot.delete_message(chat_id, msg_id)
+                except: pass
+            asyncio.create_task(delete_after(chat_id, msg.message_id, ttl))
+        except Exception as e:
+            logger.error(f"فشل إرسال رسالة الجولة إلى {chat_id}: {e}")
+            break
+        await asyncio.sleep(interval)
+        # تنظيف الجلسة (اللاعبين العشوائيين لم يتم معالجتهم هنا، يمكن إضافتهم لاحقاً)
+        async with state.group_session_lock:
+            state.group_game_sessions.pop(chat_id, None)
+
+# ---------- أوامر القناة ----------
+async def start_channel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not utils.is_founder(update.effective_user.id):
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("استخدم: /start_channel @channelname interval=120 ttl=60")
+        return
+    channel_name = args[0]
+    interval = 120
+    ttl = 60
+    for a in args[1:]:
+        if a.startswith("interval="): interval = int(a.split("=")[1])
+        elif a.startswith("ttl="): ttl = int(a.split("=")[1])
+    try:
+        chat = await context.bot.get_chat(channel_name)
+        chat_id = chat.id
+        async with state.channel_settings_lock:
+            if chat_id in state.channel_settings:
+                old_task = state.channel_settings[chat_id].get("task")
+                if old_task: old_task.cancel()
+            task = asyncio.create_task(start_channel_game_cycle(chat_id, context))
+            state.channel_settings[chat_id] = {"interval": interval, "ttl": ttl, "task": task, "message_id": None}
+        await update.message.reply_text(f"تم بدء الدورة في {chat.title} (فاصل: {interval}s | حذف: {ttl}s)")
+    except Exception as e:
+        await update.message.reply_text(f"خطأ: {str(e)}")
+
+async def stop_channel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not utils.is_founder(update.effective_user.id):
+        return
+    if not context.args:
+        await update.message.reply_text("استخدم: /stop_channel @channelname")
+        return
+    try:
+        chat = await context.bot.get_chat(context.args[0])
+        chat_id = chat.id
+        async with state.channel_settings_lock:
+            if chat_id in state.channel_settings:
+                state.channel_settings[chat_id]["task"].cancel()
+                del state.channel_settings[chat_id]
+                await update.message.reply_text(f"تم إيقاف الدورة في {chat.title}")
+            else:
+                await update.message.reply_text("لا توجد دورة نشطة لهذه القناة.")
+    except Exception as e:
+        await update.message.reply_text(f"خطأ: {str(e)}")
 
 # ---------- Admin Panel ----------
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -363,8 +540,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not utils.is_founder(update.effective_user.id):
-        return
+    if not utils.is_founder(update.effective_user.id): return
     msg = " ".join(context.args)
     if not msg:
         await update.message.reply_text("أكتب الرسالة بعد الأمر.")
@@ -374,13 +550,11 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(uid, msg)
             success += 1
-        except:
-            fail += 1
+        except: fail += 1
     await update.message.reply_text(f"تم الإرسال: {success} نجاح, {fail} فشل.")
 
 async def set_points_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not utils.is_founder(update.effective_user.id):
-        return
+    if not utils.is_founder(update.effective_user.id): return
     try:
         uid = int(context.args[0])
         points = int(context.args[1]) if len(context.args) > 1 else None
@@ -394,8 +568,7 @@ async def set_points_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("استخدم: /set_points <user_id> <points> <gems>")
 
 async def reset_games_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not utils.is_founder(update.effective_user.id):
-        return
+    if not utils.is_founder(update.effective_user.id): return
     conn = sqlite3.connect("rps_bot.db")
     conn.execute("DELETE FROM active_games")
     conn.execute("DELETE FROM pending_matches")
@@ -404,8 +577,7 @@ async def reset_games_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("تم مسح جميع المباريات العالقة.")
 
 async def channels_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not utils.is_founder(update.effective_user.id):
-        return
+    if not utils.is_founder(update.effective_user.id): return
     async with state.channel_settings_lock:
         chans = list(state.channel_settings.keys())
     if not chans:
@@ -414,10 +586,48 @@ async def channels_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "القنوات المفعلة:\n" + "\n".join([str(c) for c in chans])
     await update.message.reply_text(text)
 
-# ---------- معالج النصوص (بما فيه @mention) ----------
+# ---------- معالج النصوص (بما فيه @mention للمجموعات) ----------
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # (نفس الكود السابق دون تغيير)
-    ...
+    user = update.effective_user
+    msg = update.message.text.strip() if update.message.text else ""
+    chat_type = update.effective_chat.type
+    bot_username = context.bot.username.lower()
+    entities = update.message.entities or update.message.caption_entities
+    if entities and chat_type in ["group", "supergroup"]:
+        for ent in entities:
+            if ent.type == MessageEntity.MENTION:
+                mention = msg[ent.offset:ent.offset+ent.length]
+                if mention.lower() == f"@{bot_username}":
+                    await handle_group_mention(update, context, update.effective_chat.id)
+                    return
+            elif ent.type == MessageEntity.TEXT_MENTION:
+                if ent.user.id == context.bot.id:
+                    await handle_group_mention(update, context, update.effective_chat.id)
+                    return
+    if chat_type == "private":
+        if len(msg) > 100:
+            await update.message.reply_text("النص طويل جداً.")
+            return
+        if context.user_data.get("awaiting_friend_username"):
+            await handlers.process_friend_username(update, context)
+        elif context.user_data.get("awaiting_clan_name"):
+            await handlers.process_clan_name(update, context)
+        elif context.user_data.get("awaiting_join_clan"):
+            await handlers.process_join_clan(update, context)
+        elif context.user_data.get("awaiting_friend_challenge"):
+            username = msg.lstrip("@")
+            target = db.get_user_by_username(username)
+            if not target:
+                await update.message.reply_text("المستخدم غير موجود.")
+            else:
+                await update.message.reply_text(f"تحدي صديق قيد التطوير (سيتم إعلام {target['first_name']}).")
+            context.user_data["awaiting_friend_challenge"] = False
+
+async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    async with state.group_session_lock:
+        if chat_id in state.group_game_sessions: return
+    asyncio.create_task(start_channel_game_cycle(chat_id, context))
+    await context.bot.send_message(chat_id, "🎮 تم تفعيل اللعب! يمكنك الضغط على الأزرار أدناه:", reply_markup=keyboards.group_game_menu(chat_id))
 
 # ---------- تشغيل البوت ----------
 def main():
