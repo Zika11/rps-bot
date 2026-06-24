@@ -1,6 +1,2 @@
 [build]
-builder = "dockerfile"
-
-[deploy]
-startCommand = "python bot.py"
-restartPolicyType = "always"
+builder = "DOCKERFILE"
