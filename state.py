@@ -43,7 +43,7 @@ async def remove_game(game_id):
         conn.commit()
         conn.close()
 
-# ---------- ألعاب فردية (Solo) – نستخدم active_games أيضاً ----------
+# ---------- ألعاب فردية (Solo) ----------
 def start_solo_game(user_id):
     game_id = f"solo_{user_id}_{int(datetime.now().timestamp())}"
     conn = sqlite3.connect(DB)
@@ -84,3 +84,18 @@ def get_game_moves(game_id):
     conn.close()
     if not game: return {}
     return json.loads(game[0])
+
+# ---------- متغيرات أخرى خاصة بالمشاهدة والتحديات المفتوحة (بقيت كما هي) ----------
+spectate_challenges = {}
+spectate_lock = asyncio.Lock()
+
+group_game_sessions = {}
+group_session_lock = asyncio.Lock()
+
+open_challenges = {}
+open_challenge_lock = asyncio.Lock()
+
+group_solo_games = {}
+
+channel_settings = {}
+channel_settings_lock = asyncio.Lock()
