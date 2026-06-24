@@ -15,7 +15,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = db.get_user(user.id)
     if not u:
         db.create_user(user.id, user.username, user.first_name)
-        # نظام الإحالة
         args = context.args
         if args and args[0].startswith("ref"):
             try:
@@ -54,13 +53,15 @@ async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     rating = db.get_user_rating(user.id) or config.DEFAULT_RATING
     tier_name, tier_icon = config.get_tier_info(rating)
+    frame = db.get_user_frame(user.id)
+    frame_icon = config.AVATAR_FRAMES.get(frame, "⬛")
     wins = u.get("wins", 0)
     losses = u.get("losses", 0)
     draws = u.get("draws", 0)
     total = wins + losses + draws
     winrate = f"{(wins / total * 100):.1f}%" if total > 0 else "0%"
     profile_text = (
-        f"👤 {u['first_name']}\n"
+        f"{frame_icon} {u['first_name']}\n"
         f"🏅 التصنيف: {rating} نقطة\n"
         f"{tier_icon} الرانك: {tier_name}\n"
         f"⚔️ الإنتصارات: {wins}\n"
@@ -149,6 +150,43 @@ async def battlepass_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text += f" | مميز - {prem[0]} {prem[1] if prem[1] else ''}"
         text += "\n"
     await update.message.reply_text(text, reply_markup=keyboards.battlepass_button())
+
+# ---------- أمر البيع في السوق ----------
+async def market_sell_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    args = context.args
+    if len(args) < 4:
+        await update.message.reply_text("استخدم: /sell <نوع> <معرف> <سعر> <عملة points/gems>\nمثال: /sell frame gold 300 points")
+        return
+    item_type = args[0]
+    item_id = args[1]
+    price = int(args[2])
+    price_type = args[3].lower()
+    if price_type not in ["points", "gems"]:
+        await update.message.reply_text("العملة يجب أن تكون points أو gems")
+        return
+    # التحقق من الامتلاك (مبسط)
+    owned = False
+    u = db.get_user(user.id)
+    if item_type == "theme" and u.get("theme") == item_id:
+        owned = True
+    elif item_type == "title" and u.get("title") == item_id:
+        owned = True
+    elif item_type == "frame":
+        conn = sqlite3.connect("rps_bot.db")
+        row = conn.execute("SELECT owned_frames FROM user_frames WHERE user_id=?", (user.id,)).fetchone()
+        conn.close()
+        if row and item_id in row[0].split(","):
+            owned = True
+    elif item_type == "booster":
+        owned_items = (u.get("shop_items") or "").split(",")
+        if item_id in owned_items:
+            owned = True
+    if not owned:
+        await update.message.reply_text("لا تملك هذا العنصر.")
+        return
+    db.create_listing(user.id, item_type, item_id, price_type, price)
+    await update.message.reply_text(f"تم عرض {item_type} {item_id} للبيع بـ {price} {price_type}")
 
 # ---------- معالج الأزرار الرئيسي ----------
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -280,6 +318,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await process_solo_pick(update, context, move, game_id)
         elif game_type == "random":
             await process_random_pick(update, context, move, game_id)
+        elif game_type == "tournament":
+            # game_id هنا هو tour_id, tail = "matchIndex_move"
+            try:
+                tour_id = game_id
+                match_index, move = tail.rsplit("_", 1)
+                match_index = int(match_index)
+            except:
+                return
+            await process_tournament_pick(update, context, move, tour_id, match_index)
     elif data.startswith("group_pick_"):
         parts = data.split("_")
         move = parts[2]
@@ -313,6 +360,43 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await battlepass_command(update, context)
     elif data == "battlepass_progress":
         await battlepass_command(update, context)
+    elif data == "frames_shop":
+        await query.edit_message_text("اختر إطاراً:", reply_markup=keyboards.frame_shop())
+    elif data.startswith("buy_frame_"):
+        frame = data.split("_")[-1]
+        price = config.FRAME_PRICES.get(frame, 200)
+        u = db.get_user(user.id)
+        if u["points"] < price:
+            await query.answer("نقاط غير كافية")
+            return
+        db.update_user(user.id, points=u["points"] - price)
+        db.set_user_frame(user.id, frame)
+        await query.answer("تم شراء الإطار! استخدم /me لرؤيته.")
+    elif data == "market":
+        await query.edit_message_text("السوق:", reply_markup=keyboards.market_menu())
+    elif data == "market_browse":
+        listings = db.get_active_listings()
+        if not listings:
+            await query.edit_message_text("لا توجد عروض حالياً.")
+            return
+        text = "📊 **عروض السوق:**\n"
+        buttons = []
+        for l in listings[:5]:
+            seller = db.get_user(l["seller_id"])
+            name = seller["first_name"] if seller else "مجهول"
+            text += f"{l['listing_id']}. {l['item_type']} {l['item_id']} - {l['price']} {l['price_type']} (من {name})\n"
+            buttons.append([InlineKeyboardButton(f"شراء {l['listing_id']}", callback_data=f"market_buy_{l['listing_id']}")])
+        buttons.append([InlineKeyboardButton("رجوع", callback_data="market")])
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    elif data.startswith("market_buy_"):
+        lid = int(data.split("_")[-1])
+        success = db.buy_listing(lid, user.id)
+        if success:
+            await query.answer("تم الشراء بنجاح!")
+        else:
+            await query.answer("فشل الشراء (رصيد غير كاف أو العنصر بيع).")
+    elif data == "market_sell":
+        await query.answer("استخدم /sell <نوع> <معرف> <سعر> <عملة>")
 
     # الأصدقاء
     elif data == "add_friend":
@@ -327,7 +411,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # المتجر
     elif data == "shop_cards":
         await handlers.shop_cards(update, context)
-    elif data.startswith("buy_") and "title" not in data and "theme" not in data:
+    elif data.startswith("buy_") and "title" not in data and "theme" not in data and "frame" not in data:
         await handlers.buy_item(update, context)
     elif data == "shop_titles":
         await handlers.shop_titles(update, context)
@@ -544,6 +628,62 @@ async def process_open_acceptor_pick(update, context, move, chat_id):
         state.open_challenges.pop(chat_id, None)
     await query.edit_message_text("تم إرسال النتيجة إلى المجموعة.")
 
+# ---------- البطولة ----------
+async def process_tournament_pick(update, context, move, tour_id, match_index):
+    query = update.callback_query
+    user = query.from_user
+    tour = db.get_tournament(tour_id)
+    if not tour: return
+    bracket = json.loads(tour["bracket"])
+    current_round = tour["current_round"]
+    round_key = f"round{current_round}"
+    matches = bracket.get(round_key, [])
+    if match_index >= len(matches): return
+    match = matches[match_index]
+    # تسجيل الحركة
+    match_data = json.loads(tour.get("match_data", "{}"))
+    match_data[str(match_index)] = match_data.get(str(match_index), {})
+    match_data[str(match_index)][str(user.id)] = move
+    db.update_tournament(tour_id, match_data=json.dumps(match_data))
+    # إذا اكتملت الحركات
+    if str(match["p1"]) in match_data[str(match_index)] and str(match["p2"]) in match_data[str(match_index)]:
+        m1 = match_data[str(match_index)][str(match["p1"])]
+        m2 = match_data[str(match_index)][str(match["p2"])]
+        res = game_logic.get_result(m1, m2)
+        winner = match["p1"] if res == "win" else match["p2"] if res == "loss" else None
+        match["winner"] = winner
+        bracket[round_key][match_index] = match
+        db.update_tournament(tour_id, bracket=json.dumps(bracket))
+        # تقدم للجولة التالية؟
+        if current_round == 1:
+            # تجميع الفائزين وتكوين نصف النهائي
+            winners = [m["winner"] for m in bracket["round1"] if m["winner"] is not None]
+            if len(winners) == 4:
+                bracket["round2"] = [{"p1": winners[0], "p2": winners[1]}, {"p1": winners[2], "p2": winners[3]}]
+                db.update_tournament(tour_id, bracket=json.dumps(bracket), current_round=2)
+                for i, m2 in enumerate(bracket["round2"]):
+                    await context.bot.send_message(m2["p1"], f"🏆 نصف النهائي! اختر حركتك:", reply_markup=keyboards.tournament_choice_buttons(tour_id, i))
+                    await context.bot.send_message(m2["p2"], f"🏆 نصف النهائي! اختر حركتك:", reply_markup=keyboards.tournament_choice_buttons(tour_id, i))
+        elif current_round == 2:
+            winners = [m["winner"] for m in bracket["round2"] if m["winner"] is not None]
+            if len(winners) == 2:
+                bracket["final"] = [{"p1": winners[0], "p2": winners[1]}]
+                db.update_tournament(tour_id, bracket=json.dumps(bracket), current_round=3)
+                for i, mf in enumerate(bracket["final"]):
+                    await context.bot.send_message(mf["p1"], f"🏆 النهائي! اختر حركتك:", reply_markup=keyboards.tournament_choice_buttons(tour_id, i))
+                    await context.bot.send_message(mf["p2"], f"🏆 النهائي! اختر حركتك:", reply_markup=keyboards.tournament_choice_buttons(tour_id, i))
+        elif current_round == 3:
+            # البطولة انتهت
+            final_winner = match["winner"]
+            if final_winner:
+                db.update_user(final_winner, tournament_wins=1, points=db.get_user(final_winner)["points"]+200)
+                await context.bot.send_message(final_winner, "🎉 أنت بطل البطولة! ربحت 200 نقطة.")
+            db.update_tournament(tour_id, status="finished")
+    await query.edit_message_text("تم تسجيل حركتك.")
+
+# في handlers.join_tournament_handler بعد اكتمال 8 لاعبين، نبدأ البطولة:
+# (قمنا بتعديلها في handlers.py مباشرة، لكن نضيف المنطق هنا لو أردت)
+
 # ---------- دورة اللعب التلقائي للقنوات والمجموعات ----------
 async def start_channel_game_cycle(chat_id, context: ContextTypes.DEFAULT_TYPE):
     while True:
@@ -734,6 +874,7 @@ def main():
     app.add_handler(CommandHandler("daily", daily_command))
     app.add_handler(CommandHandler("referral", referral_command))
     app.add_handler(CommandHandler("battlepass", battlepass_command))
+    app.add_handler(CommandHandler("sell", market_sell_command))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
     app.add_handler(CommandHandler("set_points", set_points_command))
