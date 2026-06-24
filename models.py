@@ -300,7 +300,7 @@ def init_db():
         )
     """)
 
-    # 🆕 قدرات اللاعبين
+    # قدرات اللاعبين
     c.execute("""
         CREATE TABLE IF NOT EXISTS user_abilities (
             user_id INTEGER PRIMARY KEY,
@@ -313,7 +313,7 @@ def init_db():
         )
     """)
 
-    # 🆕 معارك جماعية
+    # معارك جماعية
     c.execute("""
         CREATE TABLE IF NOT EXISTS mass_battle (
             battle_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -331,7 +331,7 @@ def init_db():
         )
     """)
 
-    # 🆕 Team Battles
+    # Team Battles
     c.execute("""
         CREATE TABLE IF NOT EXISTS team_battles (
             battle_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -349,6 +349,39 @@ def init_db():
             user_id INTEGER,
             team TEXT,
             PRIMARY KEY (battle_id, user_id)
+        )
+    """)
+
+    # جلسات القناة للتصويت الآلي
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS channel_loop_state (
+            chat_id INTEGER PRIMARY KEY,
+            active INTEGER DEFAULT 1,
+            interval_sec INTEGER DEFAULT 60,
+            ttl_sec INTEGER DEFAULT 30,
+            round_id INTEGER DEFAULT 0,
+            players_choice TEXT DEFAULT '{}',
+            round_start_time TEXT
+        )
+    """)
+
+    # متابعة الـ Streak لكل لاعب في كل قناة
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS channel_user_streaks (
+            chat_id INTEGER,
+            user_id INTEGER,
+            streak INTEGER DEFAULT 0,
+            last_vote_time TEXT,
+            PRIMARY KEY (chat_id, user_id)
+        )
+    """)
+    # نقاط القناة (لتجميع نقاط التصويت)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS channel_user_points (
+            chat_id INTEGER,
+            user_id INTEGER,
+            points INTEGER DEFAULT 0,
+            PRIMARY KEY (chat_id, user_id)
         )
     """)
 
