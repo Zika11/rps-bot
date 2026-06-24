@@ -110,7 +110,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "📊 أفضل 10 لاعبين:\n"
         for i, r in enumerate(top, 1):
             name = r["first_name"] or str(r["user_id"])
-            # نضيف الرانك لكل لاعب في القائمة
             rating_val = r["rating"]
             tier_name, tier_icon = config.get_tier_info(rating_val)
             text += f"{i}. {name} - {rating_val} ({tier_icon} {tier_name})\n"
@@ -123,7 +122,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # أوضاع اللعب
     elif data == "solo":
-        # لعبة فردية - لا تحتاج لانتظار
         state.active_games[user.id] = {"type": "solo"}
         await query.edit_message_text("اختر حركتك:", reply_markup=keyboards.choice_buttons("solo"))
     elif data == "random":
@@ -132,7 +130,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("أنت بالفعل في قائمة الانتظار أو مشغول بلعبة!")
         elif result is True:
             await query.edit_message_text("بانتظار لاعب آخر...")
-        else:  # وجدنا خصم
+        else:
             opp_id = result
             await query.edit_message_text("تم العثور على خصم! اختر حركتك:", reply_markup=keyboards.choice_buttons("random"))
             await context.bot.send_message(opp_id, "تم العثور على خصم! اختر حركتك:", reply_markup=keyboards.choice_buttons("random"))
@@ -156,7 +154,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if move not in ["rock", "paper", "scissors"]:
             await query.answer("حركة غير صالحة!")
             return
-        await process_move(update, context, move, game_type)
+        # فحص إذا كانت لعبة مشاهدة
+        if game_type.startswith("spectate_"):
+            challenge_id = game_type.split("_", 1)[1]
+            await process_spectate_move(update, context, move, challenge_id)
+        else:
+            await process_move(update, context, move, game_type)
     elif data.startswith("spockpick_"):
         move = data.split("_", 1)[1]
         await process_spock_move(update, context, move)
@@ -201,6 +204,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("join_tournament_"):
         await handlers.join_tournament_handler(update, context)
 
+    # 🆕 تحديات المشاهدة
+    elif data.startswith("accept_challenge_"):
+        await handlers.accept_challenge(update, context)
+    elif data.startswith("reject_challenge_"):
+        await handlers.reject_challenge(update, context)
+
 # ---------- معالجة الحركات ----------
 async def process_move(update, context, move, game_type):
     query = update.callback_query
@@ -211,7 +220,6 @@ async def process_move(update, context, move, game_type):
         return
 
     if game_type == "solo":
-        # استخدام الذكاء المطور (Markov Chain) بدلاً من الذكاء القديم
         bot_move = utils.markov_bot_choice(user.id)
         result = game_logic.get_result(move, bot_move)
         await finish_game(update, context, user.id, move, bot_move, result)
@@ -234,7 +242,6 @@ async def process_spock_move(update, context, move):
     query = update.callback_query
     user = query.from_user
     from config import SPOCK_CHOICES, SPOCK_WIN_MAP
-    # في وضع Spock نستخدم عشوائي حاليًا (يمكن تطويره لاحقًا بنفس Markov)
     bot_move = random.choice(list(SPOCK_CHOICES.keys()))
     if move == bot_move:
         result = "draw"
@@ -245,14 +252,12 @@ async def process_spock_move(update, context, move):
     await finish_game(update, context, user.id, move, bot_move, result, spock=True)
 
 async def finish_game(update, context, user_id, user_move, opp_move, result, spock=False):
-    # تحديث ذري لقاعدة البيانات
     game = state.active_games.get(user_id)
     opponent_id = game.get("opponent") if game else None
     updated = db.apply_game_result(user_id, result, user_move, opponent_id)
     if not updated:
         return
 
-    # عرض النتيجة
     theme = utils.get_choices_for_user(user_id)
     user_icon = theme.get(user_move, user_move)
     opp_icon = theme.get(opp_move, opp_move)
@@ -260,14 +265,75 @@ async def finish_game(update, context, user_id, user_move, opp_move, result, spo
     if update.callback_query:
         await update.callback_query.edit_message_text(text)
 
-    # مهام وإنجازات ونقاط عشائر
     await game_logic.check_achievements(user_id, context)
-    await game_logic.check_and_complete_task(user_id, "task_1", context, 1)  # يمكن تعديلها لتناسب نوع اللعبة
+    await game_logic.check_and_complete_task(user_id, "task_1", context, 1)
     game_logic.add_clan_points(user_id, 2)
     utils.update_user_moves(user_id, user_move)
 
-    # إزالة اللعبة من الذاكرة
     await state.remove_game(user_id)
+
+# ---------- 🆕 معالجة تحديات المشاهدة ----------
+async def process_spectate_move(update, context, move, challenge_id):
+    query = update.callback_query
+    user = query.from_user
+    async with state.spectate_lock:
+        challenge = state.spectate_challenges.get(challenge_id)
+        if not challenge or challenge["status"] != "active":
+            await query.edit_message_text("التحدي غير موجود أو انتهى.")
+            return
+        if user.id not in challenge["players"]:
+            await query.answer("لست مشاركاً في هذا التحدي.")
+            return
+        challenge["moves"][user.id] = move
+        await query.edit_message_text("تم تسجيل حركتك، بانتظار الخصم...")
+        if len(challenge["moves"]) == 2:
+            p1, p2 = challenge["players"]
+            m1 = challenge["moves"][p1]
+            m2 = challenge["moves"][p2]
+            result_p1 = game_logic.get_result(m1, m2)
+            # تحديث قاعدة البيانات لكلا اللاعبين
+            db.apply_game_result(p1, result_p1, m1, p2)
+            # النتيجة للثاني عكس الأول
+            result_p2 = "loss" if result_p1 == "win" else ("win" if result_p1 == "loss" else "draw")
+            db.apply_game_result(p2, result_p2, m2, p1)
+            # أسماء وأيقونات
+            u1 = db.get_user(p1)
+            u2 = db.get_user(p2)
+            theme1 = utils.get_choices_for_user(p1)
+            theme2 = utils.get_choices_for_user(p2)
+            icon1 = theme1.get(m1, m1)
+            icon2 = theme2.get(m2, m2)
+            # تعليق تلقائي
+            comment = generate_commentary(result_p1, m1, m2)
+            msg = (f"⚔️ انتهت المباراة!\n"
+                   f"{u1['first_name']} اختار {icon1}\n"
+                   f"{u2['first_name']} اختار {icon2}\n"
+                   f"النتيجة: {result_p1} لصالح {u1['first_name']}\n\n"
+                   f"📢 التعليق: {comment}")
+            await context.bot.send_message(challenge["chat_id"], msg)
+            # تنظيف
+            state.spectate_challenges.pop(challenge_id, None)
+
+def generate_commentary(result, move1, move2):
+    if result == "win":
+        comments = [
+            "هجوم صاعق! الخصم لم يتمكن من الصمود.",
+            "ضربة قاضية بكل براعة!",
+            "استراتيجية محكمة أتت أكلها."
+        ]
+    elif result == "loss":
+        comments = [
+            "خسارة مؤلمة، حظ أوفر في المرة القادمة.",
+            "وقع في الفخ! الخصم كان له بالمرصاد.",
+            "درس قاسٍ، لكن الأبطال يتعلمون من الهزيمة."
+        ]
+    else:
+        comments = [
+            "تعادل عادل! كلاهما يفكر بنفس الطريقة.",
+            "قمة الإثارة والتكافؤ!",
+            "لا غالب ولا مغلوب، مباراة متوازنة."
+        ]
+    return random.choice(comments)
 
 # ---------- معالج النصوص ----------
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -311,6 +377,7 @@ def main():
     app.add_handler(CommandHandler("me", me_command))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("start_war", start_war_command))
+    app.add_handler(CommandHandler("challenge", handlers.challenge_start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     logger.info("البوت يعمل...")
