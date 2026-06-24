@@ -1,0 +1,13 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Database
+rps_bot.db
+
+# OS
+.DS_Store
+Thumbs.db
