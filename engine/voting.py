@@ -1,4 +1,4 @@
-import sqlite3, json, logging
+import sqlite3, json, logging, random
 from datetime import datetime, timedelta
 from collections import Counter
 import config
@@ -61,7 +61,6 @@ def record_channel_vote(chat_id, user_id, move):
             return False
 
     current_round = state["round_id"]
-    # إدراج أو تحديث الصف في جدول channel_votes
     conn.execute("""
         INSERT INTO channel_votes (chat_id, user_id, move, round_id) 
         VALUES (?,?,?,?)
@@ -112,7 +111,7 @@ def get_voter_count(chat_id):
     conn.close()
     return count["cnt"] if count else 0
 
-def finish_channel_round(chat_id):
+def finish_channel_round(chat_id, event=None):
     conn = get_conn()
     state = conn.execute("SELECT * FROM channel_loop_state WHERE chat_id=? AND active=1 AND status='ACTIVE'", (chat_id,)).fetchone()
     if not state:
@@ -121,7 +120,6 @@ def finish_channel_round(chat_id):
 
     current_round = state["round_id"]
 
-    # جلب جميع الأصوات من الجدول المنفصل لهذه الجولة
     votes = conn.execute("SELECT user_id, move FROM channel_votes WHERE chat_id=? AND round_id=?", (chat_id, current_round)).fetchall()
     if not votes:
         conn.execute("UPDATE channel_loop_state SET status='WAITING' WHERE chat_id=?", (chat_id,))
@@ -136,17 +134,52 @@ def finish_channel_round(chat_id):
 
     draw = False
     winning_moves = []
-    if len(sorted_counts) >= 2 and sorted_counts[0][1] == sorted_counts[1][1]:
-        draw = True
-        top_count = sorted_counts[0][1]
-        winning_moves = [move for move, cnt in sorted_counts if cnt == top_count]
+    # تطبيق قواعد الفوضى
+    if event:
+        if event == "reverse_win":
+            # أقل حركة هي التي تفوز
+            if sorted_counts:
+                min_count = sorted_counts[-1][1]
+                winning_moves = [move for move, cnt in counts.items() if cnt == min_count]
+                draw = len(winning_moves) > 1
+        elif event == "random_winner":
+            # اختيار حركة عشوائية كفائزة
+            if counts:
+                winning_moves = [random.choice(list(counts.keys()))]
+                draw = False
+        elif event in config.BANNED_MOVE_EVENTS:
+            banned_move = config.BANNED_MOVE_EVENTS[event]
+            # استبعاد الحركة المحظورة وإعادة حساب النتائج بدونها
+            filtered = {uid: mv for uid, mv in valid_choices.items() if mv != banned_move}
+            if filtered:
+                moves = list(filtered.values())
+                counts = dict(Counter(moves))
+                sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+                valid_choices = filtered
+                # إعادة حساب الفائز بدون الحركة المحظورة
+                if len(sorted_counts) >= 2 and sorted_counts[0][1] == sorted_counts[1][1]:
+                    draw = True
+                    top_count = sorted_counts[0][1]
+                    winning_moves = [move for move, cnt in sorted_counts if cnt == top_count]
+                else:
+                    draw = False
+                    winning_moves = [sorted_counts[0][0]]
+            else:
+                # الكل اختار المحظور → لا فائز
+                winning_moves = []
+                draw = False
     else:
-        winning_moves = [sorted_counts[0][0]]
+        # بدون حدث، الحساب العادي
+        if len(sorted_counts) >= 2 and sorted_counts[0][1] == sorted_counts[1][1]:
+            draw = True
+            top_count = sorted_counts[0][1]
+            winning_moves = [move for move, cnt in sorted_counts if cnt == top_count]
+        else:
+            winning_moves = [sorted_counts[0][0]]
 
     winners = [uid for uid, mv in valid_choices.items() if mv in winning_moves]
 
     new_round = current_round + 1
-    # تحديث حالة الجولة (لم نعد بحاجة لـ players_choice)
     conn.execute("UPDATE channel_loop_state SET round_id=?, predictions='{}', status='WAITING', round_start_time=datetime('now') WHERE chat_id=?",
                  (new_round, chat_id))
     conn.commit()
