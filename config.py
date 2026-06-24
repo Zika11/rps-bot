@@ -1,7 +1,11 @@
 import os
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
-FOUNDER_ID = 1232067711
+FOUNDER_ID = int(os.getenv("FOUNDER_ID", 1232067711))
+
+# دعم Volume على Railway
+DATA_DIR = os.getenv("DATA_DIR", ".")
+DB_NAME = os.path.join(DATA_DIR, "rps_bot.db")
 
 CHOICES = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
 WIN_MAP = {"rock": "scissors", "paper": "rock", "scissors": "paper"}
@@ -22,8 +26,8 @@ THEMES = {
 }
 THEME_ICONS = THEMES
 
-DEFAULT_RATING = 1000
-RATING_K = 32
+DEFAULT_RATING = int(os.getenv("DEFAULT_RATING", 1000))
+RATING_K = int(os.getenv("RATING_K", 32))
 
 RATING_TIERS = [
     (0, 999, "برونز", "🥉"), (1000, 1199, "فضة", "🥈"),
@@ -40,17 +44,17 @@ SHOP_ITEMS = {
     "shield_1h": {"type": "booster", "name": "درع الخسارة (ساعة)", "price": 40},
     "extra_gems_1h": {"type": "booster", "name": "جواهر إضافية (ساعة)", "price": 30},
 }
-TREASURE_BOX_PRICE = 100
+TREASURE_BOX_PRICE = int(os.getenv("TREASURE_BOX_PRICE", 100))
 TREASURE_REWARDS = [("points", 50), ("points", 100), ("gems", 5), ("title", "ملك الصندوق"), ("theme", "theme_3"), ("booster", "double_points_1h")]
 TITLES_SHOP = [{"id": "title_king", "name": "👑 الملك", "price": 200}, {"id": "title_legend", "name": "🏆 الأسطورة", "price": 500}]
 THEMES_SHOP = [{"id": "theme_2", "name": "🌑 الظلال", "price": 150}, {"id": "theme_4", "name": "💎 الكريستال", "price": 250}]
 
 DAILY_REWARDS = {1:(10,0),2:(15,0),3:(20,1),4:(25,0),5:(30,2),6:(35,0),7:(50,3)}
 WHEEL_REWARDS = [("points",100,0.15),("points",200,0.1),("points",50,0.25),("gems",5,0.2),("title","محظوظ",0.1),("theme","theme_3",0.1),("treasure_box",None,0.1)]
-WHEEL_COST = 5
+WHEEL_COST = int(os.getenv("WHEEL_COST", 5))
 
-MAX_BATTLE_PASS_LEVEL = 10
-BATTLE_PASS_XP_PER_LEVEL = 100
+MAX_BATTLE_PASS_LEVEL = int(os.getenv("MAX_BATTLE_PASS_LEVEL", 10))
+BATTLE_PASS_XP_PER_LEVEL = int(os.getenv("BATTLE_PASS_XP_PER_LEVEL", 100))
 BATTLE_PASS_REWARDS = {
     1:{"free":("points",50),"premium":("gems",5)}, 2:{"free":("points",75),"premium":("title","بطل الموسم")},
     3:{"free":("gems",3),"premium":("booster","double_points_1h")}, 4:{"free":("points",100),"premium":("theme","theme_4")},
@@ -71,16 +75,16 @@ CLAN_UPGRADES = {
     "shield": {"name": "حماية العشيرة", "levels": 3, "cost_per_level": 500},
 }
 WAR_REGIONS = ["الصحراء", "الغابة", "الجبل", "المحيط"]
-WAR_SEASON_DURATION_DAYS = 7
-WAR_POINTS_PER_WIN = 3
+WAR_SEASON_DURATION_DAYS = int(os.getenv("WAR_SEASON_DAYS", 7))
+WAR_POINTS_PER_WIN = int(os.getenv("WAR_POINTS_PER_WIN", 3))
 
-SEASON_DURATION_DAYS = 30
-SEASON_RESET_RATING = 1000
+SEASON_DURATION_DAYS = int(os.getenv("SEASON_DURATION_DAYS", 30))
+SEASON_RESET_RATING = int(os.getenv("SEASON_RESET_RATING", 1000))
 
-BOSS_HP = 1000
+BOSS_HP = int(os.getenv("BOSS_HP", 1000))
 BOSS_REWARD_TOP_DAMAGE = ("points", 500)
 BOSS_REWARD_PARTICIPATION = ("gems", 50)
-BOSS_SPAWN_INTERVAL_HOURS = 6
+BOSS_SPAWN_INTERVAL_HOURS = int(os.getenv("BOSS_SPAWN_HOURS", 6))
 
 # قدرات اللاعبين
 ABILITIES = {
@@ -90,42 +94,42 @@ ABILITIES = {
 }
 
 # Drop System
-DROP_CHANCE = 0.1
+DROP_CHANCE = float(os.getenv("DROP_CHANCE", 0.1))
 DROP_REWARDS = [("points", 200), ("gems", 10), ("title", "صياد الكنوز"), ("theme", "theme_5")]
 
 # Mass Battle
-MASS_BATTLE_DURATION = 30
+MASS_BATTLE_DURATION = int(os.getenv("MASS_BATTLE_DURATION", 30))
 MASS_BATTLE_REWARD = (30, 5)
 
 # Channel Voting Loop
-CHANNEL_LOOP_INTERVAL = 60
-CHANNEL_LOOP_TTL = 30
+CHANNEL_LOOP_INTERVAL = int(os.getenv("CHANNEL_INTERVAL", 60))
+CHANNEL_LOOP_TTL = int(os.getenv("CHANNEL_TTL", 30))
 CHANNEL_LOOP_REWARDS = {
-    "win": 10,
-    "draw": 5,
-    "loss": 2
+    "win": int(os.getenv("REWARD_WIN", 10)),
+    "draw": int(os.getenv("REWARD_DRAW", 5)),
+    "loss": int(os.getenv("REWARD_LOSS", 2))
 }
 
 # Meta Game
-STREAK_BONUS = 2
-EVENT_CHANCE = 0.3
+STREAK_BONUS = int(os.getenv("STREAK_BONUS", 2))
+EVENT_CHANCE = float(os.getenv("EVENT_CHANCE", 0.3))
 POSSIBLE_EVENTS = ["double_points", "shuffle", "boss", "ban_rock", "ban_paper", "ban_scissors", "reverse_win", "random_winner"]
 BANNED_MOVE_EVENTS = {"ban_rock": "rock", "ban_paper": "paper", "ban_scissors": "scissors"}
-PREDICTION_BONUS = 3
+PREDICTION_BONUS = int(os.getenv("PREDICTION_BONUS", 3))
 
 # تجميد التصويت
-VOTE_FREEZE_SECONDS = 2
+VOTE_FREEZE_SECONDS = int(os.getenv("VOTE_FREEZE_SECONDS", 2))
 
 # مضاعفات الستريك
 STREAK_MULTIPLIERS = {
-    3: 2,
-    5: 3
+    3: int(os.getenv("STREAK_MULTIPLIER_3", 2)),
+    5: int(os.getenv("STREAK_MULTIPLIER_5", 3))
 }
 
-# 🆕 XP System
-XP_PER_WIN = 20
-XP_PER_LOSS = 5
-XP_PER_DRAW = 10
+# XP System
+XP_PER_WIN = int(os.getenv("XP_PER_WIN", 20))
+XP_PER_LOSS = int(os.getenv("XP_PER_LOSS", 5))
+XP_PER_DRAW = int(os.getenv("XP_PER_DRAW", 10))
 LEVEL_THRESHOLDS = {1: 0, 2: 50, 3: 120, 4: 220, 5: 350, 6: 500, 7: 700, 8: 1000, 9: 1400, 10: 2000}
 LEVEL_TITLES = {
     1: ("مبتدئ", "🥉"),
@@ -133,3 +137,6 @@ LEVEL_TITLES = {
     5: ("متقدم", "🥇"),
     10: ("محترف", "👑")
 }
+
+# 🆕 مكافأة الإحالة (موحدة)
+REFERRAL_REWARD = int(os.getenv("REFERRAL_REWARD", 200))
