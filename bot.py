@@ -215,6 +215,14 @@ async def market_sell_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     db.create_listing(user.id, item_type, item_id, price_type, price)
     await update.message.reply_text(f"تم عرض {item_type} {item_id} للبيع بـ {price} {price_type}")
 
+# ---------- أمر الويب ----------
+async def web_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إرسال رابط الويب مع معرف القناة الحالية"""
+    chat_id = update.effective_chat.id
+    base_url = "https://rps-web.vercel.app"  # ← استبدله برابط Vercel الفعلي
+    web_link = f"{base_url}/?chat={chat_id}"
+    await update.message.reply_text(f"🔗 رابط اللعبة على الويب:\n{web_link}")
+
 # ---------- معالج الأزرار الرئيسي ----------
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -551,7 +559,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_reset":
         await admin_reset_games(update, context)
 
-    # تصويت القناة
+    # تصويت القناة مع ملاحظات فورية
     elif data.startswith("channel_vote_"):
         parts = data.split("_")
         chat_id = int(parts[2])
@@ -566,9 +574,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with lock:
             success = voting.record_channel_vote(chat_id, user.id, move)
         if success:
-            await query.answer("تم تسجيل اختيارك! ✅")
+            await query.answer(f"لقد اخترت {move}! ✅")
+            # تحديث رسالة الدعوة لاظهار عدد المصوتين
+            voter_count = voting.get_voter_count(chat_id)
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=query.message.message_id,
+                    text=f"🔥 **جولة جديدة!** (تنتهي قريباً)\nاختر حركتك:\n\n🗳 عدد المصوتين: {voter_count}",
+                    reply_markup=keyboards.channel_vote_buttons(chat_id)
+                )
+            except Exception as e:
+                logger.error(f"فشل تحديث عدد المصوتين: {e}")
         else:
-            await query.answer("الجولة الحالية غير نشطة.")
+            await query.answer("التصويت متوقف (تجميد ما قبل النهاية).")
 
     elif data.startswith("ch_leaderboard_"):
         chat_id = int(data.split("_")[-1])
@@ -891,7 +910,9 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 banned = config.BANNED_MOVE_EVENTS[current_event]
                 event_text = f"🚫 حدث: {banned} محظور هذه الجولة!"
 
-            voting.start_channel_loop(chat_id, interval, ttl)
+            end_str = voting.start_channel_loop(chat_id, interval, ttl)
+            end_dt = datetime.fromisoformat(end_str)
+
             try:
                 msg = await context.bot.send_message(
                     chat_id,
@@ -915,13 +936,17 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 await asyncio.sleep(5)
                 continue
 
-            try: await asyncio.sleep(interval)
-            except asyncio.CancelledError:
-                try: await context.bot.delete_message(chat_id, invite_message_id)
-                except: pass
-                try: await context.bot.delete_message(chat_id, pred_message_id)
-                except: pass
-                raise
+            # انتظار مدة الجولة بناءً على end_time
+            remaining = (end_dt - datetime.now()).total_seconds()
+            if remaining > 0:
+                try:
+                    await asyncio.sleep(remaining)
+                except asyncio.CancelledError:
+                    try: await context.bot.delete_message(chat_id, invite_message_id)
+                    except: pass
+                    try: await context.bot.delete_message(chat_id, pred_message_id)
+                    except: pass
+                    raise
 
             # قفل القناة لإنهاء الجولة
             lock = await channel_state.get_vote_lock(chat_id)
@@ -1260,6 +1285,7 @@ def main():
     app.add_handler(CommandHandler("massbattle", massbattle_command))
     app.add_handler(CommandHandler("drop", drop_command))
     app.add_handler(CommandHandler("teambattle", teambattle_command))
+    app.add_handler(CommandHandler("web", web_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
