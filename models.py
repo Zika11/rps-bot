@@ -1,7 +1,7 @@
 import sqlite3
 import config
 
-DB_NAME = "rps_bot.db"
+DB_NAME = config.DB_NAME
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -40,7 +40,9 @@ def init_db():
             move_history TEXT,
             active_boosters TEXT DEFAULT '{}',
             last_login TEXT,
-            registered_date TEXT
+            registered_date TEXT,
+            xp INTEGER DEFAULT 0,
+            level INTEGER DEFAULT 1
         )
     """)
 
@@ -352,7 +354,7 @@ def init_db():
         )
     """)
 
-    # جلسات القناة للتصويت الآلي (بدون players_choice)
+    # جلسات القناة للتصويت الآلي
     c.execute("""
         CREATE TABLE IF NOT EXISTS channel_loop_state (
             chat_id INTEGER PRIMARY KEY,
@@ -366,7 +368,6 @@ def init_db():
             end_time TEXT
         )
     """)
-    # محاولة إضافة أو تعديل الأعمدة إذا كان الجدول موجودًا مسبقًا
     try:
         c.execute("ALTER TABLE channel_loop_state ADD COLUMN status TEXT DEFAULT 'WAITING'")
     except sqlite3.OperationalError:
@@ -380,7 +381,7 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
-    # 🆕 جدول التصويت المنفصل (بديل players_choice JSON)
+    # جدول التصويت المنفصل
     c.execute("""
         CREATE TABLE IF NOT EXISTS channel_votes (
             chat_id INTEGER,
@@ -402,15 +403,20 @@ def init_db():
             PRIMARY KEY (chat_id, user_id)
         )
     """)
-    # نقاط القناة (لتجميع نقاط التصويت)
+    # نقاط القناة
     c.execute("""
         CREATE TABLE IF NOT EXISTS channel_user_points (
             chat_id INTEGER,
             user_id INTEGER,
             points INTEGER DEFAULT 0,
+            last_updated TEXT DEFAULT (datetime('now')),
             PRIMARY KEY (chat_id, user_id)
         )
     """)
+    try:
+        c.execute("ALTER TABLE channel_user_points ADD COLUMN last_updated TEXT DEFAULT (datetime('now'))")
+    except sqlite3.OperationalError:
+        pass
 
     # إدراج بيانات افتراضية
     c.execute("SELECT COUNT(*) FROM tasks")
