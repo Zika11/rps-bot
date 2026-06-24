@@ -82,17 +82,31 @@ BOSS_REWARD_TOP_DAMAGE = ("points", 500)
 BOSS_REWARD_PARTICIPATION = ("gems", 50)
 BOSS_SPAWN_INTERVAL_HOURS = 6
 
-# 🆕 قدرات اللاعبين
+# قدرات اللاعبين
 ABILITIES = {
     "shield": {"name": "درع", "icon": "🛡", "cost": 50, "cooldown_minutes": 30},
     "double_points": {"name": "نقاط مضاعفة", "icon": "⚡", "cost": 40, "cooldown_minutes": 20},
     "reverse": {"name": "عكس النتيجة", "icon": "🔄", "cost": 60, "cooldown_minutes": 45},
 }
 
-# 🆕 Drop System
-DROP_CHANCE = 0.1  # 10% كل 10 دقائق
+# Drop System
+DROP_CHANCE = 0.1
 DROP_REWARDS = [("points", 200), ("gems", 10), ("title", "صياد الكنوز"), ("theme", "theme_5")]
 
-# 🆕 Mass Battle
-MASS_BATTLE_DURATION = 30  # ثانية
-MASS_BATTLE_REWARD = (30, 5)  # نقاط، جواهر للفائزين
+# Mass Battle
+MASS_BATTLE_DURATION = 30
+MASS_BATTLE_REWARD = (30, 5)
+
+# ⚡ Channel Voting Loop (جولة آلية كل دقيقة)
+CHANNEL_LOOP_INTERVAL = 60
+CHANNEL_LOOP_TTL = 30
+CHANNEL_LOOP_REWARDS = {
+    "win": 10,
+    "draw": 5,
+    "loss": 2
+}
+
+# Meta Game
+STREAK_BONUS = 2
+EVENT_CHANCE = 0.3
+POSSIBLE_EVENTS = ["double_points", "shuffle", "boss"]
