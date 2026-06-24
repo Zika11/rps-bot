@@ -11,6 +11,7 @@ import handlers.channel_handlers as channel_h
 import handlers.game_handlers as game_h
 import handlers.shop_handlers as shop_h
 import handlers.social_handlers as social_h
+import handlers.misc_handlers as misc_h
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -379,9 +380,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await game_h.accept_open_challenge(update, context, chat_id)
     elif data.startswith("spectate_"):
         chat_id = int(data.split("_")[-1])
-        # spectate room create
-        from handlers import spectate_room_create
-        await spectate_room_create(update, context)
+        await misc_h.spectate_room_create(update, context)
 
     # اختيار الحركات
     elif data.startswith("pick_"):
@@ -558,27 +557,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_reset":
         await admin_reset_games(update, context)
     elif data == "boss_attack":
-        # World Boss attack
-        from handlers import boss_attack
-        await boss_attack(update, context)
+        await misc_h.boss_attack(update, context)
     elif data == "boss_status":
-        from handlers import boss_command
-        await boss_command(update, context)
+        await misc_h.boss_command(update, context)
     elif data == "tournament":
-        from handlers import tournament_menu
-        await tournament_menu(update, context)
+        await misc_h.tournament_menu(update, context)
     elif data.startswith("join_tournament_"):
-        from handlers import join_tournament_handler
-        await join_tournament_handler(update, context)
+        await misc_h.join_tournament_handler(update, context)
     elif data.startswith("accept_challenge_"):
-        from handlers import accept_challenge
-        await accept_challenge(update, context)
+        await misc_h.accept_challenge(update, context)
     elif data.startswith("reject_challenge_"):
-        from handlers import reject_challenge
-        await reject_challenge(update, context)
+        await misc_h.reject_challenge(update, context)
     elif data.startswith("spectate_join_"):
-        from handlers import spectate_join
-        await spectate_join(update, context)
+        await misc_h.spectate_join(update, context)
 
 # ---------- Admin Panel ----------
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -778,7 +769,6 @@ async def teambattle_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(f"🔴 {team1} vs {team2} 🔵\nاضغط للانضمام لفريق:",
                                    reply_markup=keyboards.team_battle_team_buttons(battle_id))
     await asyncio.sleep(60)
-    # process team battle
     conn = sqlite3.connect(config.DB_NAME)
     battle = conn.execute("SELECT * FROM team_battles WHERE battle_id=?", (battle_id,)).fetchone()
     if not battle: return
@@ -812,12 +802,12 @@ def main():
     app.add_handler(CommandHandler("sell", market_sell_command))
     app.add_handler(CommandHandler("shop", shop_command))
     app.add_handler(CommandHandler("buy", buy_command))
-    app.add_handler(CommandHandler("season", __import__('handlers').season_command))
-    app.add_handler(CommandHandler("boss", __import__('handlers').boss_command))
+    app.add_handler(CommandHandler("season", misc_h.season_command))
+    app.add_handler(CommandHandler("boss", misc_h.boss_command))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("start_channel", start_channel_command))
     app.add_handler(CommandHandler("stop_channel", stop_channel_command))
-    app.add_handler(CommandHandler("challenge", __import__('handlers').challenge_start))
+    app.add_handler(CommandHandler("challenge", misc_h.challenge_start))
     app.add_handler(CommandHandler("massbattle", massbattle_command))
     app.add_handler(CommandHandler("drop", drop_command))
     app.add_handler(CommandHandler("teambattle", teambattle_command))
