@@ -11,18 +11,30 @@ models.init_db()
 
 # ---------- مهمة التنظيف الدورية ----------
 async def cleanup_stuck_games():
-    """حذف الألعاب العالقة التي مضى عليها أكثر من 5 دقائق"""
     while True:
-        await asyncio.sleep(60)  # كل دقيقة
+        await asyncio.sleep(60)
         try:
             conn = sqlite3.connect("rps_bot.db")
             cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
             conn.execute("DELETE FROM active_games WHERE created_at < ?", (cutoff,))
-            conn.execute("DELETE FROM pending_matches")  # تفريغ قائمة الانتظار القديمة
+            conn.execute("DELETE FROM pending_matches")
             conn.commit()
             conn.close()
         except Exception as e:
-            logger.error(f"خطأ في تنظيف الألعاب العالقة: {e}")
+            logger.error(f"خطأ في تنظيف الألعاب: {e}")
+
+# ---------- مهمة Drops التلقائية ----------
+async def auto_drops(context: ContextTypes.DEFAULT_TYPE):
+    while True:
+        await asyncio.sleep(600)  # كل 10 دقائق
+        if random.random() < config.DROP_CHANCE:
+            for chat_id in list(state.channel_settings.keys()):
+                reward = random.choice(config.DROP_REWARDS)
+                keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎁 افتح الصندوق!", callback_data=f"claim_drop_{reward[0]}_{reward[1]}")]])
+                try:
+                    await context.bot.send_message(chat_id, "💥 صندوق مفاجئ! أول واحد يضغط يربح:", reply_markup=keyboard)
+                except:
+                    pass
 
 # ---------- أوامر أساسية ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -344,6 +356,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await process_tournament_pick(update, context, move, tour_id, match_index)
         elif game_type == "spectate":
             await process_spectate_pick(update, context, move, game_id)
+        elif game_type == "mass":
+            # حركة للمعركة الجماعية
+            chat_id = int(game_id)
+            db.add_mass_pick(chat_id, user.id, move)
+            await query.edit_message_text("تم تسجيل حركتك في المعركة الجماعية!")
     elif data.startswith("group_pick_"):
         parts = data.split("_")
         move = parts[2]
@@ -415,6 +432,42 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "market_sell":
         await query.answer("استخدم /sell <نوع> <معرف> <سعر> <عملة>")
 
+    # Mini Game Platform
+    elif data == "abilities_shop":
+        await query.edit_message_text("🛡️ متجر القدرات:", reply_markup=keyboards.abilities_shop())
+    elif data.startswith("buy_ability_"):
+        ability = data.split("_")[-1]
+        if db.buy_ability(user.id, ability):
+            await query.answer(f"تم شراء {config.ABILITIES[ability]['name']}!")
+        else:
+            await query.answer("نقاط غير كافية")
+    elif data.startswith("mass_join_"):
+        chat_id = int(data.split("_")[-1])
+        await context.bot.send_message(user.id, "اختر حركتك للمعركة الجماعية:", reply_markup=keyboards.choice_buttons(f"mass_{chat_id}"))
+        await query.answer("اختر في الخاص!")
+    elif data.startswith("claim_drop_"):
+        parts = data.split("_")
+        rtype, value = parts[2], parts[3]
+        if rtype == "points":
+            db.update_user(user.id, points=db.get_user(user.id)["points"] + int(value))
+            await query.answer(f"ربحت {value} نقطة!")
+        elif rtype == "gems":
+            db.update_user(user.id, gems=db.get_user(user.id).get("gems",0) + int(value))
+            await query.answer(f"ربحت {value} جوهرة!")
+        elif rtype == "title":
+            db.update_user(user.id, title=value)
+            await query.answer(f"حصلت على لقب {value}!")
+        elif rtype == "theme":
+            db.update_user(user.id, theme=value)
+            await query.answer("حصلت على ثيم جديد!")
+        await query.edit_message_text(f"🎁 {user.first_name} حصل على الجائزة!")
+    elif data.startswith("team_join_"):
+        parts = data.split("_")
+        battle_id = int(parts[2])
+        team = parts[3]
+        db.add_team_player(battle_id, user.id, team)
+        await query.answer(f"انضممت لفريق {'الأحمر' if team=='red' else 'الأزرق'}!")
+
     # الأصدقاء
     elif data == "add_friend":
         await handlers.add_friend_start(update, context)
@@ -428,7 +481,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # المتجر
     elif data == "shop_cards":
         await handlers.shop_cards(update, context)
-    elif data.startswith("buy_") and "title" not in data and "theme" not in data and "frame" not in data:
+    elif data.startswith("buy_") and "title" not in data and "theme" not in data and "frame" not in data and "ability" not in data:
         await handlers.buy_item(update, context)
     elif data == "shop_titles":
         await handlers.shop_titles(update, context)
@@ -483,7 +536,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "boss_status":
         await handlers.boss_command(update, context)
 
-    # لوحة تحكم الأدمن التفاعلية
+    # لوحة تحكم الأدمن
     elif data == "admin":
         await admin_panel(update, context)
     elif data == "admin_stats":
@@ -835,7 +888,7 @@ async def stop_channel_command(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         await update.message.reply_text(f"خطأ: {str(e)}")
 
-# ---------- Admin Panel (تفاعلية) ----------
+# ---------- Admin Panel ----------
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not utils.is_founder(update.effective_user.id):
         return
@@ -879,7 +932,66 @@ async def admin_reset_games(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     await query.answer("تم مسح المباريات العالقة.")
 
-# ---------- معالج النصوص (بما فيه @mention وأوامر الأدمن) ----------
+# ---------- الأوامر الجماعية ----------
+async def massbattle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    battle_id = db.start_mass_battle(chat_id)
+    await context.bot.send_message(chat_id, "⚡ معركة جماعية! اختر حركتك خلال 30 ثانية:",
+                                   reply_markup=keyboards.mass_battle_start_button(chat_id))
+    await asyncio.sleep(config.MASS_BATTLE_DURATION)
+    winners = db.get_mass_battle_results(battle_id)
+    if winners:
+        for uid in winners:
+            db.update_user(uid, points=db.get_user(uid)["points"] + config.MASS_BATTLE_REWARD[0],
+                           gems=db.get_user(uid).get("gems",0) + config.MASS_BATTLE_REWARD[1])
+        winner_names = ", ".join([db.get_user(uid)["first_name"] for uid in winners[:5]])
+        await context.bot.send_message(chat_id, f"🎉 انتهت المعركة! الفائزون: {winner_names} (+{config.MASS_BATTLE_REWARD[0]} نقطة، +{config.MASS_BATTLE_REWARD[1]} جوهرة)")
+    else:
+        await context.bot.send_message(chat_id, "لم ينضم أحد للمعركة!")
+
+async def drop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not utils.is_founder(update.effective_user.id): return
+    chat_id = update.effective_chat.id
+    reward = random.choice(config.DROP_REWARDS)
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎁 افتح الصندوق!", callback_data=f"claim_drop_{reward[0]}_{reward[1]}")]])
+    await context.bot.send_message(chat_id, "💥 صندوق مفاجئ! أول واحد يضغط يربح:", reply_markup=keyboard)
+
+async def teambattle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("استخدم: /teambattle اسم_الفريق_الأحمر اسم_الفريق_الأزرق")
+        return
+    team1, team2 = context.args[0], context.args[1]
+    battle_id = db.create_team_battle(chat_id, team1, team2)
+    await update.message.reply_text(f"🔴 {team1} vs {team2} 🔵\nاضغط للانضمام لفريق:",
+                                   reply_markup=keyboards.team_battle_team_buttons(battle_id))
+    await asyncio.sleep(60)
+    await process_team_battle(battle_id, context)
+
+async def process_team_battle(battle_id, context):
+    conn = sqlite3.connect("rps_bot.db")
+    battle = conn.execute("SELECT * FROM team_battles WHERE battle_id=?", (battle_id,)).fetchone()
+    if not battle: return
+    chat_id = battle["chat_id"]
+    team1_players = db.get_team_players(battle_id, "red")
+    team2_players = db.get_team_players(battle_id, "blue")
+    for uid in team1_players:
+        await context.bot.send_message(uid, "اختر حركتك لمعركة الفريق:", reply_markup=keyboards.choice_buttons(f"teambattle_{battle_id}"))
+    for uid in team2_players:
+        await context.bot.send_message(uid, "اختر حركتك لمعركة الفريق:", reply_markup=keyboards.choice_buttons(f"teambattle_{battle_id}"))
+    state.team_battle_moves[battle_id] = {}
+    await asyncio.sleep(60)
+    team1_score, team2_score = 0, 0
+    if battle_id in state.team_battle_moves:
+        for uid, move in state.team_battle_moves[battle_id].items():
+            if uid in team1_players:
+                team1_score += 1 if move == "rock" else 0
+            elif uid in team2_players:
+                team2_score += 1 if move == "rock" else 0
+    winner_team = "red" if team1_score > team2_score else "blue" if team2_score > team1_score else "draw"
+    await context.bot.send_message(chat_id, f"نتيجة المعركة: {'🔴 فاز الفريق الأحمر' if winner_team=='red' else '🔵 فاز الفريق الأزرق' if winner_team=='blue' else 'تعادل'}")
+
+# ---------- معالج النصوص ----------
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     msg = update.message.text.strip() if update.message.text else ""
@@ -900,7 +1012,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
     if chat_type == "private":
-        # التعامل مع أوامر الأدمن التفاعلية
         if context.user_data.get("awaiting_broadcast"):
             broadcast_msg = update.message.text
             success, fail = 0, 0
@@ -954,9 +1065,6 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ---------- تشغيل البوت ----------
 def main():
-    # بدء مهمة التنظيف الدورية
-    asyncio.create_task(cleanup_stuck_games())
-
     app = Application.builder().token(config.BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("me", me_command))
@@ -970,8 +1078,15 @@ def main():
     app.add_handler(CommandHandler("start_channel", start_channel_command))
     app.add_handler(CommandHandler("stop_channel", stop_channel_command))
     app.add_handler(CommandHandler("challenge", handlers.challenge_start))
+    app.add_handler(CommandHandler("massbattle", massbattle_command))
+    app.add_handler(CommandHandler("drop", drop_command))
+    app.add_handler(CommandHandler("teambattle", teambattle_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+
+    asyncio.create_task(cleanup_stuck_games())
+    asyncio.create_task(auto_drops(app))
+
     logger.info("البوت يعمل...")
     app.run_polling()
 
