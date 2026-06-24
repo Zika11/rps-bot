@@ -63,16 +63,34 @@ def leaderboard(chat_id: int, limit: int = 10):
     conn.close()
     return [{"name": r["first_name"], "points": r["points"]} for r in rows]
 
+# 🆕 التحقق من initData (Telegram Mini App)
 @app.post("/auth/telegram")
 async def verify_telegram(data: dict):
-    check_hash = data.pop("hash", None)
-    if not check_hash:
+    init_data = data.get("initData")
+    if not init_data:
         return {"valid": False}
 
-    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(data.items()))
+    # التحقق من صحة initData باستخدام التوكن
+    from urllib.parse import unquote
+    import json
+
+    # استخراج hash من initData
+    params = {}
+    for item in init_data.split("&"):
+        if "=" in item:
+            k, v = item.split("=", 1)
+            params[k] = unquote(v)
+
+    received_hash = params.pop("hash", None)
+    if not received_hash:
+        return {"valid": False}
+
+    # بناء data_check_string
+    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
+
     secret_key = hashlib.sha256(config.BOT_TOKEN.encode()).digest()
     hmac_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
 
-    if hmac_hash == check_hash:
+    if hmac_hash == received_hash:
         return {"valid": True}
     return {"valid": False}
