@@ -64,24 +64,35 @@ FRAME_PRICES = {"gold":200,"diamond":500,"fire":300,"legend":1000}
 
 TOURNAMENT_SETTINGS = {"entry_fee":20,"prize_pool_multiplier":5,"rounds":["ربع النهائي","نصف النهائي","النهائي"]}
 
-# 🆕 Clan Treasury & Upgrades
+# Clan Treasury & Upgrades
 CLAN_UPGRADES = {
     "bonus_points": {"name": "نقاط إضافية", "levels": 5, "cost_per_level": 200},
     "bonus_gems": {"name": "جواهر إضافية", "levels": 3, "cost_per_level": 300},
     "shield": {"name": "حماية العشيرة", "levels": 3, "cost_per_level": 500},
 }
-
-# 🆕 Clan Wars Map
 WAR_REGIONS = ["الصحراء", "الغابة", "الجبل", "المحيط"]
 WAR_SEASON_DURATION_DAYS = 7
 WAR_POINTS_PER_WIN = 3
 
-# 🆕 Seasons
 SEASON_DURATION_DAYS = 30
 SEASON_RESET_RATING = 1000
 
-# 🆕 World Boss
 BOSS_HP = 1000
 BOSS_REWARD_TOP_DAMAGE = ("points", 500)
 BOSS_REWARD_PARTICIPATION = ("gems", 50)
 BOSS_SPAWN_INTERVAL_HOURS = 6
+
+# 🆕 قدرات اللاعبين
+ABILITIES = {
+    "shield": {"name": "درع", "icon": "🛡", "cost": 50, "cooldown_minutes": 30},
+    "double_points": {"name": "نقاط مضاعفة", "icon": "⚡", "cost": 40, "cooldown_minutes": 20},
+    "reverse": {"name": "عكس النتيجة", "icon": "🔄", "cost": 60, "cooldown_minutes": 45},
+}
+
+# 🆕 Drop System
+DROP_CHANCE = 0.1  # 10% كل 10 دقائق
+DROP_REWARDS = [("points", 200), ("gems", 10), ("title", "صياد الكنوز"), ("theme", "theme_5")]
+
+# 🆕 Mass Battle
+MASS_BATTLE_DURATION = 30  # ثانية
+MASS_BATTLE_REWARD = (30, 5)  # نقاط، جواهر للفائزين
