@@ -97,7 +97,7 @@ DROP_REWARDS = [("points", 200), ("gems", 10), ("title", "صياد الكنوز"
 MASS_BATTLE_DURATION = 30
 MASS_BATTLE_REWARD = (30, 5)
 
-# ⚡ Channel Voting Loop (جولة آلية كل دقيقة)
+# Channel Voting Loop
 CHANNEL_LOOP_INTERVAL = 60
 CHANNEL_LOOP_TTL = 30
 CHANNEL_LOOP_REWARDS = {
@@ -109,4 +109,6 @@ CHANNEL_LOOP_REWARDS = {
 # Meta Game
 STREAK_BONUS = 2
 EVENT_CHANCE = 0.3
-POSSIBLE_EVENTS = ["double_points", "shuffle", "boss"]
+POSSIBLE_EVENTS = ["double_points", "shuffle", "boss", "ban_rock", "ban_paper", "ban_scissors", "reverse_win"]
+BANNED_MOVE_EVENTS = {"ban_rock": "rock", "ban_paper": "paper", "ban_scissors": "scissors"}
+PREDICTION_BONUS = 3
