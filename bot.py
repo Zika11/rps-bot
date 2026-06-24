@@ -40,39 +40,43 @@ async def auto_drops(app):
 
 # ---------- أوامر أساسية ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    u = db.get_user(user.id)
-    if not u:
-        db.create_user(user.id, user.username, user.first_name)
-        args = context.args
-        if args and args[0].startswith("ref"):
-            try:
-                ref_id = int(args[0][3:])
-                if ref_id != user.id:
-                    ref_user = db.get_user(ref_id)
-                    if ref_user:
-                        db.update_user(ref_id,
-                                       referrals=int(ref_user.get("referrals",0)) + 1,
-                                       points=int(ref_user.get("points",0)) + 50)
-                        await context.bot.send_message(ref_id, f"🎉 {user.first_name} انضم عبر رابط الإحالة الخاص بك! ربحت 50 نقطة.")
-            except:
-                pass
-    else:
-        today = date.today().isoformat()
-        last = u.get("last_login")
-        streak = int(u.get("login_streak",0))
-        if last:
-            last_date = date.fromisoformat(last[:10])
-            diff = (date.today() - last_date).days
-            if diff == 1: streak += 1
-            elif diff > 1: streak = 1
+    try:
+        user = update.effective_user
+        u = db.get_user(user.id)
+        if not u:
+            db.create_user(user.id, user.username, user.first_name)
+            args = context.args
+            if args and args[0].startswith("ref"):
+                try:
+                    ref_id = int(args[0][3:])
+                    if ref_id != user.id:
+                        ref_user = db.get_user(ref_id)
+                        if ref_user:
+                            db.update_user(ref_id,
+                                           referrals=int(ref_user.get("referrals",0)) + 1,
+                                           points=int(ref_user.get("points",0)) + 50)
+                            await context.bot.send_message(ref_id, f"🎉 {user.first_name} انضم عبر رابط الإحالة الخاص بك! ربحت 50 نقطة.")
+                except:
+                    pass
         else:
-            streak = 1
-        days = (date.today() - date.fromisoformat(u["registered_date"][:10])).days if u.get("registered_date") else 0
-        db.update_user(user.id, last_login=datetime.now().isoformat(), login_streak=streak, days_since_register=days)
-        await game_logic.check_achievements(user.id, context)
-    text = f"أهلاً {user.first_name}! اختر من القائمة:"
-    await update.message.reply_text(text, reply_markup=keyboards.main_menu())
+            today = date.today().isoformat()
+            last = u.get("last_login")
+            streak = int(u.get("login_streak",0))
+            if last:
+                last_date = date.fromisoformat(last[:10])
+                diff = (date.today() - last_date).days
+                if diff == 1: streak += 1
+                elif diff > 1: streak = 1
+            else:
+                streak = 1
+            days = (date.today() - date.fromisoformat(u["registered_date"][:10])).days if u.get("registered_date") else 0
+            db.update_user(user.id, last_login=datetime.now().isoformat(), login_streak=streak, days_since_register=days)
+            await game_logic.check_achievements(user.id, context)
+        text = f"أهلاً {user.first_name}! اختر من القائمة:"
+        await update.message.reply_text(text, reply_markup=keyboards.main_menu())
+    except Exception as e:
+        logger.error(f"خطأ في أمر /start: {e}")
+        await update.message.reply_text("حدث خطأ، الرجاء المحاولة لاحقاً.")
 
 async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
