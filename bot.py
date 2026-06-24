@@ -907,6 +907,8 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
             if current_event == "double_points": event_text = "🎁 حدث: نقاط مضاعفة!"
             elif current_event == "shuffle": event_text = "🌀 حدث: خلط الأصوات!"
             elif current_event == "boss": event_text = "🐉 حدث: الزعيم يشارك!"
+            elif current_event == "reverse_win": event_text = "🔄 حدث: عكس الفوز! الحركة الأقل تفوز"
+            elif current_event == "random_winner": event_text = "🎲 حدث: فائز عشوائي!"
             elif current_event in config.BANNED_MOVE_EVENTS:
                 banned = config.BANNED_MOVE_EVENTS[current_event]
                 event_text = f"🚫 حدث: {banned} محظور هذه الجولة!"
@@ -949,8 +951,8 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                     except: pass
                     raise
 
-            # إنهاء الجولة عبر game_engine
-            result = await game_engine.finish_round(chat_id)
+            # 🌀 إنهاء الجولة عبر game_engine مع تمرير الحدث للفوضى
+            result = await game_engine.finish_round(chat_id, event=current_event)
 
             # حذف رسالة التوقع
             try: await context.bot.delete_message(chat_id, pred_message_id)
@@ -1006,6 +1008,10 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                     text += f"عدد الفائزين: {len(winners)}\n"
                 if current_event == "double_points":
                     text += "🎁 نقاط مضاعفة!\n"
+                if current_event == "reverse_win":
+                    text += "🔄 حدث عكس الفوز: الحركة الأقل فازت!\n"
+                if current_event == "random_winner":
+                    text += "🎲 تم اختيار فائز عشوائي!\n"
                 if prediction_winners:
                     names = ", ".join([users_engine.get_user(uid)["first_name"] for uid in prediction_winners[:5]])
                     text += f"🔮 توقع صحيح: {names} (+{config.PREDICTION_BONUS})\n"
