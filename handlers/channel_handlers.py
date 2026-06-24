@@ -6,6 +6,7 @@ import db, config, keyboards
 import engine.state as channel_state
 import engine.users as users_engine
 from engine.game_engine import GameEngine
+import utils
 
 logger = logging.getLogger(__name__)
 engine = GameEngine()
@@ -164,7 +165,7 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 winners = result["winners"]
                 winning = ", ".join(result["winning_moves"])
                 is_draw = result["draw"]
-                bot_move = __import__('utils').markov_bot_choice(0)
+                bot_move = utils.markov_bot_choice(0)
 
                 players_rewards = []
                 for uid, move in result["players"].items():
@@ -250,3 +251,74 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
     async with channel_state.channel_settings_lock:
         if chat_id in channel_state.channel_settings:
             del channel_state.channel_settings[chat_id]
+
+# ---------- 🆕 معالجات أزرار بدء/إيقاف القناة (للمؤسس) ----------
+async def admin_start_channel_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """يطلب من المؤسس إرسال اسم القناة لبدء اللعبة"""
+    query = update.callback_query
+    await query.edit_message_text("أرسل معرف القناة (مثل @channelname) مع الإعدادات:\n`@channelname interval=60 ttl=30`")
+    context.user_data["awaiting_start_channel"] = True
+
+async def process_start_channel_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """يعالج النص المُرسل لبدء قناة"""
+    user = update.effective_user
+    if not utils.is_founder(user.id):
+        await update.message.reply_text("غير مسموح")
+        return
+    text = update.message.text.strip()
+    args = text.split()
+    if not args:
+        await update.message.reply_text("استخدم: @channelname interval=60 ttl=30")
+        return
+    channel_name = args[0]
+    interval = 60
+    ttl = 30
+    for a in args[1:]:
+        if a.startswith("interval="): interval = int(a.split("=")[1])
+        elif a.startswith("ttl="): ttl = int(a.split("=")[1])
+    try:
+        chat = await context.bot.get_chat(channel_name)
+        chat_id = chat.id
+        async with channel_state.channel_settings_lock:
+            if chat_id in channel_state.channel_settings:
+                old_task = channel_state.channel_settings[chat_id].get("task")
+                if old_task:
+                    old_task.cancel()
+                del channel_state.channel_settings[chat_id]
+        task = asyncio.create_task(channel_voting_loop(chat_id, context))
+        async with channel_state.channel_settings_lock:
+            channel_state.channel_settings[chat_id] = {"interval": interval, "ttl": ttl, "task": task}
+        await update.message.reply_text(f"تم بدء جولات التصويت التلقائي في {chat.title}\nالفاصل: {interval}s | حذف الرسالة: {ttl}s")
+    except Exception as e:
+        await update.message.reply_text(f"خطأ: {str(e)}")
+    context.user_data["awaiting_start_channel"] = False
+
+async def admin_stop_channel_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """يطلب من المؤسس إرسال اسم القناة لإيقاف اللعبة"""
+    query = update.callback_query
+    await query.edit_message_text("أرسل معرف القناة (مثل @channelname) لإيقاف اللعبة:")
+    context.user_data["awaiting_stop_channel"] = True
+
+async def process_stop_channel_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """يعالج النص المُرسل لإيقاف قناة"""
+    user = update.effective_user
+    if not utils.is_founder(user.id):
+        await update.message.reply_text("غير مسموح")
+        return
+    text = update.message.text.strip()
+    channel_name = text.split()[0]
+    try:
+        chat = await context.bot.get_chat(channel_name)
+        chat_id = chat.id
+        async with channel_state.channel_settings_lock:
+            if chat_id in channel_state.channel_settings:
+                task = channel_state.channel_settings[chat_id].get("task")
+                if task:
+                    task.cancel()
+                del channel_state.channel_settings[chat_id]
+                await update.message.reply_text(f"تم إيقاف جولات التصويت في {chat.title}")
+            else:
+                await update.message.reply_text("لا توجد جولات نشطة لهذه القناة.")
+    except Exception as e:
+        await update.message.reply_text(f"خطأ: {str(e)}")
+    context.user_data["awaiting_stop_channel"] = False
