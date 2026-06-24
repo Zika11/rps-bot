@@ -15,6 +15,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = db.get_user(user.id)
     if not u:
         db.create_user(user.id, user.username, user.first_name)
+        # نظام الإحالة
+        args = context.args
+        if args and args[0].startswith("ref"):
+            try:
+                ref_id = int(args[0][3:])
+                if ref_id != user.id:
+                    ref_user = db.get_user(ref_id)
+                    if ref_user:
+                        db.update_user(ref_id,
+                                       referrals=int(ref_user.get("referrals",0)) + 1,
+                                       points=int(ref_user.get("points",0)) + 50)
+                        await context.bot.send_message(ref_id, f"🎉 {user.first_name} انضم عبر رابط الإحالة الخاص بك! ربحت 50 نقطة.")
+            except:
+                pass
     else:
         today = date.today().isoformat()
         last = u.get("last_login")
@@ -58,6 +72,83 @@ async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🏘️ العشيرة: {u.get('clan', 'لا يوجد')}"
     )
     await update.message.reply_text(profile_text)
+
+# ---------- الأوامر الجديدة ----------
+async def daily_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    result = db.claim_daily(user.id)
+    if result is None:
+        await update.message.reply_text("لقد حصلت على مكافأتك اليومية بالفعل! ⏳")
+        return
+    day = result["day"]
+    points = result["points"]
+    gems = result["gems"]
+    text = f"🎁 **مكافأة اليوم {day}**\n+{points} نقطة"
+    if gems > 0:
+        text += f" +{gems} جوهرة"
+    await update.message.reply_text(text)
+
+async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    bot_username = context.bot.username
+    ref_link = f"https://t.me/{bot_username}?start=ref{user.id}"
+    u = db.get_user(user.id)
+    refs = u.get("referrals", 0) if u else 0
+    text = f"🔗 **رابط الإحالة الخاص بك:**\n{ref_link}\n\nعدد المدعوين: {refs}\nكل من ينضم عبر هذا الرابط يكسبك 50 نقطة."
+    await update.message.reply_text(text)
+
+async def wheel_spin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    u = db.get_user(user.id)
+    if u["gems"] < config.WHEEL_COST:
+        await query.answer("تحتاج 5 جواهر لتدوير العجلة!")
+        return
+    db.update_user(user.id, gems=u["gems"] - config.WHEEL_COST)
+    reward_type, value = db.spin_wheel(user.id)
+    if reward_type == "points":
+        db.update_user(user.id, points=u["points"] + value)
+        msg = f"🎉 ربحت {value} نقطة!"
+    elif reward_type == "gems":
+        db.update_user(user.id, gems=u["gems"] + value)
+        msg = f"🎉 ربحت {value} جوهرة!"
+    elif reward_type == "title":
+        db.update_user(user.id, title=value)
+        msg = f"🎉 حصلت على لقب '{value}'!"
+    elif reward_type == "theme":
+        db.update_user(user.id, theme=value)
+        msg = f"🎉 حصلت على ثيم جديد!"
+    elif reward_type == "treasure_box":
+        sub = random.choice(config.TREASURE_REWARDS)
+        if sub[0] == "points":
+            db.update_user(user.id, points=u["points"] + sub[1])
+            msg = f"🎁 صندوق كنز: +{sub[1]} نقطة"
+        elif sub[0] == "gems":
+            db.update_user(user.id, gems=u["gems"] + sub[1])
+            msg = f"🎁 صندوق كنز: +{sub[1]} جوهرة"
+        else:
+            msg = "🎁 صندوق كنز!"
+    db.add_battle_pass_xp(user.id, 5)
+    await query.edit_message_text(f"🎡 العجلة توقفت عند: {msg}", reply_markup=keyboards.wheel_button())
+
+async def battlepass_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    bp = db.get_battle_pass(user.id)
+    level = bp["level"]
+    xp = bp["xp"]
+    required_xp = level * config.BATTLE_PASS_XP_PER_LEVEL
+    text = f"📊 **Battle Pass - الموسم 1**\n"
+    text += f"المستوى: {level}/{config.MAX_BATTLE_PASS_LEVEL}\n"
+    text += f"الخبرة: {xp}/{required_xp}\n\n"
+    for lvl in range(1, min(level+1, config.MAX_BATTLE_PASS_LEVEL+1)):
+        rewards = config.BATTLE_PASS_REWARDS.get(lvl, {})
+        free = rewards.get("free")
+        prem = rewards.get("premium")
+        text += f"م {lvl}: مجاني - {free[0]} {free[1] if free[1] else ''}"
+        if prem:
+            text += f" | مميز - {prem[0]} {prem[1] if prem[1] else ''}"
+        text += "\n"
+    await update.message.reply_text(text, reply_markup=keyboards.battlepass_button())
 
 # ---------- معالج الأزرار الرئيسي ----------
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -174,7 +265,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # اختيار الحركات
     elif data.startswith("pick_"):
-        # الصيغة: pick_{game_type}_{game_id}_{move}
         parts = data.split("_", 2)
         if len(parts) < 3: return
         game_type = parts[1]
@@ -213,6 +303,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         move = parts[2]
         chat_id = int(parts[3])
         await process_open_acceptor_pick(update, context, move, chat_id)
+
+    # الميزات الجديدة
+    elif data == "wheel":
+        await query.edit_message_text("🎡 عجلة الحظ! تدوير بـ 5 جواهر.", reply_markup=keyboards.wheel_button())
+    elif data == "wheel_spin":
+        await wheel_spin_handler(update, context)
+    elif data == "battlepass":
+        await battlepass_command(update, context)
+    elif data == "battlepass_progress":
+        await battlepass_command(update, context)
 
     # الأصدقاء
     elif data == "add_friend":
@@ -260,7 +360,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("reject_challenge_"):
         await handlers.reject_challenge(update, context)
 
-# ---------- دوال اللعب (Solo & Random) ----------
+# ---------- دوال اللعب الأساسية ----------
 async def process_solo_pick(update, context, move, game_id):
     query = update.callback_query
     user = query.from_user
@@ -322,7 +422,6 @@ async def process_spock_move(update, context, move):
         result = "win"
     else:
         result = "loss"
-    # نستخدم نظام اللعبة الفردي المؤقت
     game_id = state.start_solo_game(user.id)
     db.apply_game_result(user.id, result, move, None)
     utils.update_user_moves(user.id, move)
@@ -461,7 +560,6 @@ async def start_channel_game_cycle(chat_id, context: ContextTypes.DEFAULT_TYPE):
             async with state.channel_settings_lock:
                 if chat_id in state.channel_settings:
                     state.channel_settings[chat_id]["message_id"] = msg.message_id
-            # جدولة حذف الرسالة
             async def delete_after(chat_id, msg_id, delay):
                 await asyncio.sleep(delay)
                 try: await context.bot.delete_message(chat_id, msg_id)
@@ -471,7 +569,6 @@ async def start_channel_game_cycle(chat_id, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"فشل إرسال رسالة الجولة إلى {chat_id}: {e}")
             break
         await asyncio.sleep(interval)
-        # تنظيف الجلسة (اللاعبين العشوائيين لم يتم معالجتهم هنا، يمكن إضافتهم لاحقاً)
         async with state.group_session_lock:
             state.group_game_sessions.pop(chat_id, None)
 
@@ -634,6 +731,9 @@ def main():
     app = Application.builder().token(config.BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("me", me_command))
+    app.add_handler(CommandHandler("daily", daily_command))
+    app.add_handler(CommandHandler("referral", referral_command))
+    app.add_handler(CommandHandler("battlepass", battlepass_command))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
     app.add_handler(CommandHandler("set_points", set_points_command))
