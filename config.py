@@ -81,7 +81,7 @@ THEMES_SHOP = [
     {"id": "theme_4", "name": "💎 الكريستال", "price": 250},
 ]
 
-# 🆕 Daily Login Rewards
+# مكافآت تسجيل الدخول اليومية
 DAILY_REWARDS = {
     1: (10, 0),
     2: (15, 0),
@@ -92,7 +92,7 @@ DAILY_REWARDS = {
     7: (50, 3)
 }
 
-# 🆕 Lucky Wheel
+# عجلة الحظ
 WHEEL_REWARDS = [
     ("points", 100, 0.15),
     ("points", 200, 0.1),
@@ -104,7 +104,7 @@ WHEEL_REWARDS = [
 ]
 WHEEL_COST = 5  # جواهر
 
-# 🆕 Battle Pass
+# Battle Pass
 MAX_BATTLE_PASS_LEVEL = 10
 BATTLE_PASS_XP_PER_LEVEL = 100
 BATTLE_PASS_REWARDS = {
@@ -118,4 +118,26 @@ BATTLE_PASS_REWARDS = {
     8: {"free": ("points", 150), "premium": ("theme", "theme_2")},
     9: {"free": ("treasure_box", None), "premium": ("gems", 15)},
     10: {"free": ("points", 200), "premium": ("title", "أسطورة الموسم")}
+}
+
+# 🆕 إطارات الأفاتار
+AVATAR_FRAMES = {
+    "default": "⬛",
+    "gold": "🟨",
+    "diamond": "💠",
+    "legend": "👑",
+    "fire": "🔥"
+}
+FRAME_PRICES = {
+    "gold": 200,
+    "diamond": 500,
+    "fire": 300,
+    "legend": 1000
+}
+
+# 🆕 إعدادات البطولة
+TOURNAMENT_SETTINGS = {
+    "entry_fee": 20,
+    "prize_pool_multiplier": 5,
+    "rounds": ["ربع النهائي", "نصف النهائي", "النهائي"]
 }
