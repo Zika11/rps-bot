@@ -1,70 +1,73 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from config import *
-from utils import get_choices_for_user, is_founder
 
-def main_menu_keyboard(user_id=None):
-    rows = [
-        [InlineKeyboardButton("🎮 العب الآن", callback_data="menu_play")],
-        [InlineKeyboardButton("🎁 المكافأة اليومية", callback_data="daily_bonus")],
-        [InlineKeyboardButton("🏆 التصنيف", callback_data="menu_rank"),
-         InlineKeyboardButton("🗡️ العشائر", callback_data="menu_clans")],
-        [InlineKeyboardButton("🎁 المهام", callback_data="menu_tasks"),
-         InlineKeyboardButton("🛒 المتجر", callback_data="menu_shop")],
-        [InlineKeyboardButton("👥 الأصدقاء", callback_data="menu_friends"),
-         InlineKeyboardButton("📺 القنوات", callback_data="menu_channels")],
-        [InlineKeyboardButton("👤 حسابي", callback_data="menu_profile"),
-         InlineKeyboardButton("❓ طريقة اللعب", callback_data="menu_howto")],
-        [InlineKeyboardButton("⭐ تقييم البوت", callback_data="menu_rate"),
-         InlineKeyboardButton("💎 دعم البوت", callback_data="menu_support")],
-        [InlineKeyboardButton("🔗 دعوة صديق", callback_data="menu_referral"),
-         InlineKeyboardButton("🏆 انضم للبطولة", callback_data="join_tournament")],
+def main_menu(lang="ar"):
+    if lang == "ar":
+        btns = [
+            ("🎮 لعب", "game"), ("👥 أصدقاء", "friends"),
+            ("🛒 متجر", "shop"), ("🏆 عشائر", "clans"),
+            ("📋 المهام", "tasks"), ("🏅 الإنجازات", "achievements"),
+            ("📊 التصنيف", "rating"), ("🌐 اللغة", "language")
+        ]
+    else:
+        btns = [
+            ("🎮 Play", "game"), ("👥 Friends", "friends"),
+            ("🛒 Shop", "shop"), ("🏆 Clans", "clans"),
+            ("📋 Tasks", "tasks"), ("🏅 Achievements", "achievements"),
+            ("📊 Rating", "rating"), ("🌐 Language", "language")
+        ]
+    keyboard = [[InlineKeyboardButton(text, callback_data=data) for text, data in btns[i:i+2]] for i in range(0, len(btns), 2)]
+    return InlineKeyboardMarkup(keyboard)
+
+def game_mode_menu(lang="ar"):
+    modes = [
+        ("🕹️ فردي", "solo"), ("🌍 عشوائي", "random"),
+        ("👤 ضد صديق", "friend"), ("📢 قناة", "channel"),
+        ("🖖 Spock", "spock"), ("📖 القصة", "story"),
+        ("🔙 رجوع", "back_main")
+    ] if lang == "ar" else [
+        ("🕹️ Solo", "solo"), ("🌍 Random", "random"),
+        ("👤 vs Friend", "friend"), ("📢 Channel", "channel"),
+        ("🖖 Spock", "spock"), ("📖 Story", "story"),
+        ("🔙 Back", "back_main")
     ]
-    if user_id and is_founder(user_id):
-        rows.append([InlineKeyboardButton("👑 لوحة المؤسس", callback_data="founder_panel")])
-    return InlineKeyboardMarkup(rows)
+    return InlineKeyboardMarkup([[InlineKeyboardButton(text, callback_data=data)] for text, data in modes])
 
-def back_btn(target="menu_main"):
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=target)]])
+def choice_buttons(game_type="solo"):
+    from config import CHOICES
+    buttons = [InlineKeyboardButton(icon, callback_data=f"pick_{key}_{game_type}") for key, icon in CHOICES.items()]
+    return InlineKeyboardMarkup([buttons])
 
-def play_menu_keyboard():
+def back_button(callback="back_main", lang="ar"):
+    text = "🔙 رجوع" if lang == "ar" else "🔙 Back"
+    return InlineKeyboardMarkup([[InlineKeyboardButton(text, callback_data=callback)]])
+
+def friends_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🤖 لعب فردي", callback_data="play_solo")],
-        [InlineKeyboardButton("👥 لعب مع صديق", callback_data="play_friend")],
-        [InlineKeyboardButton("🎲 لعب عشوائي", callback_data="play_random")],
-        [InlineKeyboardButton("📺 لعب في قناة/جروب", callback_data="play_channel")],
-        [InlineKeyboardButton("🖖 Spock", callback_data="play_spock")],
-        [InlineKeyboardButton("📖 وضع القصة", callback_data="story_mode")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="menu_main")],
+        [InlineKeyboardButton("➕ إضافة صديق", callback_data="add_friend")],
+        [InlineKeyboardButton("📥 طلبات الصداقة", callback_data="friend_requests")],
+        [InlineKeyboardButton("👥 قائمة الأصدقاء", callback_data="friend_list")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
     ])
 
-def solo_keyboard(user_id=None):
-    choices = get_choices_for_user(user_id)
-    return InlineKeyboardMarkup([[InlineKeyboardButton(v, callback_data=f"solo_{k}") for k,v in choices.items()]])
-
-def mp_keyboard(game_id):
-    return InlineKeyboardMarkup([[InlineKeyboardButton(v, callback_data=f"mp_{game_id}_{k}") for k,v in CHOICES.items()]])
-
-def channel_keyboard(channel_id):
-    return InlineKeyboardMarkup([[InlineKeyboardButton(v, callback_data=f"ch_{channel_id}_{k}") for k,v in CHOICES.items()]])
-
-def stars_keyboard():
-    options = [1,5,10,20,30,40,50]
+def shop_categories():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"{'⭐'*(min(s//10+1,3))} {s}", callback_data=f"rate_{s}") for s in options[:4]],
-        [InlineKeyboardButton(f"{'⭐'*(min(s//10+1,3))} {s}", callback_data=f"rate_{s}") for s in options[4:]],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="menu_main")]
+        [InlineKeyboardButton("🃏 بطاقات", callback_data="shop_cards")],
+        [InlineKeyboardButton("🏷️ الألقاب", callback_data="shop_titles")],
+        [InlineKeyboardButton("🎨 الثيمات", callback_data="shop_themes")],
+        [InlineKeyboardButton("🎁 صندوق الكنز", callback_data="treasure_box")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
     ])
 
-def founder_keyboard():
+def clans_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ إضافة نقاط", callback_data="f_addpts"),
-         InlineKeyboardButton("➖ خصم نقاط", callback_data="f_subpts")],
-        [InlineKeyboardButton("🚫 حظر لاعب", callback_data="f_ban"),
-         InlineKeyboardButton("✅ فك حظر", callback_data="f_unban")],
-        [InlineKeyboardButton("📢 رسالة جماعية", callback_data="f_broadcast")],
-        [InlineKeyboardButton("🛒 إدارة المتجر", callback_data="f_shop"),
-         InlineKeyboardButton("🎁 إدارة المهام", callback_data="f_tasks")],
-        [InlineKeyboardButton("📊 الإحصائيات", callback_data="f_stats"),
-         InlineKeyboardButton("⭐ التقييمات", callback_data="f_ratings")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="menu_main")],
+        [InlineKeyboardButton("🏘️ إنشاء عشيرة", callback_data="clan_create")],
+        [InlineKeyboardButton("🔗 الانضمام لعشيرة", callback_data="clan_join")],
+        [InlineKeyboardButton("📊 ترتيب العشائر", callback_data="clan_ranking")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
+    ])
+
+def tournament_keyboard(tour_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏆 انضم للبطولة", callback_data=f"join_tournament_{tour_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
     ])
