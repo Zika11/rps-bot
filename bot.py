@@ -3,7 +3,7 @@ from datetime import datetime, date, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 import models, db, config, state, keyboards, game_logic, utils, handlers
-import engine.game_engine as game_engine
+from engine.game_engine import GameEngine
 import engine.state as channel_state
 import engine.users as users_engine
 import engine.economy as economy
@@ -11,6 +11,7 @@ import engine.economy as economy
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+engine = GameEngine()
 models.init_db()
 
 # ---------- المهام الدورية (خلفية) ----------
@@ -94,10 +95,18 @@ async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     draws = u.get("draws", 0)
     total = wins + losses + draws
     winrate = f"{(wins / total * 100):.1f}%" if total > 0 else "0%"
+    xp = u.get("xp", 0)
+    level = u.get("level", 1)
+    level_title, level_icon = "مبتدئ", "🥉"
+    for lvl in sorted(config.LEVEL_TITLES.keys(), reverse=True):
+        if level >= lvl:
+            level_title, level_icon = config.LEVEL_TITLES[lvl]
+            break
     profile_text = (
         f"{frame_icon} {u['first_name']}\n"
         f"🏅 التصنيف: {rating} نقطة\n"
         f"{tier_icon} الرانك: {tier_name}\n"
+        f"⬆️ المستوى: {level} {level_icon} ({level_title})\n"
         f"⚔️ الإنتصارات: {wins}\n"
         f"💀 الهزائم: {losses}\n"
         f"🤝 التعادلات: {draws}\n"
@@ -597,41 +606,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_reset":
         await admin_reset_games(update, context)
 
-    # تصويت القناة مع ملاحظات فورية (تستخدم game_engine)
-    elif data.startswith("channel_vote_"):
-        parts = data.split("_")
-        chat_id = int(parts[2])
-        move = parts[3]
-        if move not in ["rock", "paper", "scissors"]:
-            await query.answer("حركة غير صالحة!")
-            return
-        if await channel_state.is_spam_vote(chat_id, user.id):
-            await query.answer("أنت تصوت بسرعة كبيرة! انتظر ثانيتين.")
-            return
-        success = await game_engine.vote(chat_id, user.id, move)
-        if success:
-            await query.answer(f"لقد اخترت {move}! ✅")
-            voter_count = game_engine.get_voter_count(chat_id)
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=query.message.message_id,
-                    text=f"🔥 **جولة جديدة!** (تنتهي قريباً)\nاختر حركتك:\n\n🗳 عدد المصوتين: {voter_count}",
-                    reply_markup=keyboards.channel_vote_buttons(chat_id)
-                )
-            except Exception as e:
-                logger.error(f"فشل تحديث عدد المصوتين: {e}")
-        else:
-            await query.answer("التصويت متوقف (تجميد ما قبل النهاية).")
-
-    elif data.startswith("ch_leaderboard_"):
-        chat_id = int(data.split("_")[-1])
-        top = db.get_channel_leaderboard(chat_id, 10)
-        text = "🏆 **أفضل 10 لاعبين في القناة:**\n"
-        for i, r in enumerate(top, 1):
-            text += f"{i}. {r['first_name']} - {r['points']} نقطة\n"
-        await query.edit_message_text(text)
-
+    # توقع حركة الفائز
     elif data.startswith("predict_"):
         parts = data.split("_")
         chat_id = int(parts[1])
@@ -642,11 +617,55 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await channel_state.is_spam_vote(chat_id, user.id):
             await query.answer("تم استلام توقعك بالفعل!")
             return
-        success = await game_engine.predict(chat_id, user.id, predicted_move)
+        success = await engine.predict(chat_id, user.id, predicted_move)
         if success:
             await query.answer("تم تسجيل توقعك! 🔮")
         else:
             await query.answer("التوقع غير متاح الآن.")
+
+    # قائمة القناة
+    elif data.startswith("channel_play_"):
+        chat_id = int(data.split("_")[-1])
+        asyncio.create_task(channel_voting_loop(chat_id, context))
+        await query.edit_message_text("تم بدء اللعبة! أول جولة خلال لحظات...")
+    elif data.startswith("weekly_leaderboard_"):
+        chat_id = int(data.split("_")[-1])
+        top = db.get_weekly_channel_leaderboard(chat_id, 10)
+        text = "🏆 **أفضل 10 لاعبين هذا الأسبوع:**\n"
+        for i, r in enumerate(top, 1):
+            text += f"{i}. {r['name']} - {r['points']} نقطة\n"
+        await query.edit_message_text(text)
+    elif data == "profile":
+        await me_command(update, context)
+
+# ---------- معالج الأزرار الجديد للقناة ----------
+async def handle_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    data = query.data  # 'move_rock'
+    move = data.split("_")[1]
+    chat_id = query.message.chat_id
+
+    if await channel_state.is_spam_vote(chat_id, user.id):
+        await query.answer("أنت تصوت بسرعة كبيرة! انتظر ثانيتين.", show_alert=True)
+        return
+
+    success = await engine.vote(chat_id, user.id, move)
+    if success:
+        await query.answer(f"لقد اخترت {move}! ✅")
+        # تحديث حي
+        voter_count = engine.get_voter_count(chat_id)
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=query.message.message_id,
+                text=f"🔥 **جولة جديدة!** (تنتهي قريباً)\nاختر حركتك:\n\n🗳 عدد المصوتين: {voter_count}",
+                reply_markup=keyboards.rps_keyboard()
+            )
+        except Exception as e:
+            logger.error(f"فشل تحديث عدد المصوتين: {e}")
+    else:
+        await query.answer("التصويت متوقف (تجميد ما قبل النهاية).", show_alert=True)
 
 # ---------- دوال اللعب الأساسية ----------
 async def process_solo_pick(update, context, move, game_id):
@@ -944,14 +963,14 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 banned = config.BANNED_MOVE_EVENTS[current_event]
                 event_text = f"🚫 حدث: {banned} محظور هذه الجولة!"
 
-            end_str = await game_engine.start_round(chat_id, interval, ttl)
+            end_str = await engine.start_round(chat_id, interval, ttl)
             end_dt = datetime.fromisoformat(end_str)
 
             try:
                 msg = await context.bot.send_message(
                     chat_id,
                     f"🔥 **جولة جديدة!** (تنتهي خلال {interval} ثانية)\n{event_text}\nاختر حركتك:",
-                    reply_markup=keyboards.channel_vote_buttons(chat_id)
+                    reply_markup=keyboards.rps_keyboard()
                 )
                 invite_message_id = msg.message_id
                 # إرسال أزرار التوقع
@@ -970,6 +989,34 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 await asyncio.sleep(5)
                 continue
 
+            # مهمة التحديث الحي للإحصائيات
+            async def update_live_stats():
+                end = end_dt
+                while datetime.now() < end:
+                    try:
+                        stats = engine.get_live_stats(chat_id)
+                        if stats:
+                            text = f"🔥 **جولة جديدة!** (تنتهي قريباً)\n{event_text}\nاختر حركتك:\n\n"
+                            for move, emoji in [("rock", "🪨"), ("paper", "📄"), ("scissors", "✂️")]:
+                                text += f"{emoji} {move}: {stats['counts'][move]}\n"
+                            text += f"🗳 المجموع: {stats['total']}"
+                            try:
+                                await context.bot.edit_message_text(
+                                    chat_id=chat_id,
+                                    message_id=invite_message_id,
+                                    text=text,
+                                    reply_markup=keyboards.rps_keyboard()
+                                )
+                            except:
+                                pass
+                        await asyncio.sleep(3)
+                    except asyncio.CancelledError:
+                        break
+                    except Exception as e:
+                        logger.error(f"خطأ في تحديث الإحصائيات: {e}")
+                        await asyncio.sleep(3)
+            asyncio.create_task(update_live_stats())
+
             # انتظار مدة الجولة بناءً على end_time
             remaining = (end_dt - datetime.now()).total_seconds()
             if remaining > 0:
@@ -982,15 +1029,15 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                     except: pass
                     raise
 
-            # إنهاء الجولة عبر game_engine مع تمرير الحدث للفوضى
-            result = await game_engine.finish_round(chat_id, event=current_event)
+            # 🌀 إنهاء الجولة عبر game_engine مع تمرير الحدث للفوضى
+            result = await engine.finish_round(chat_id, event=current_event)
 
             # حذف رسالة التوقع
             try: await context.bot.delete_message(chat_id, pred_message_id)
             except: pass
 
             # معالجة التوقعات
-            predictions = game_engine.get_predictions(chat_id)
+            predictions = engine.get_predictions(chat_id)
             prediction_winners = []
             if predictions and result and result["winning_moves"]:
                 win_move = result["winning_moves"][0]
@@ -1021,7 +1068,21 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                         "clan": users_engine.get_user(uid_int).get("clan") if users_engine.get_user(uid_int) else None
                     })
 
-                game_engine.process_rewards(chat_id, players_rewards)
+                engine.process_rewards(chat_id, players_rewards)
+
+                # --- حساب MVP ---
+                mvp_user_id = None
+                mvp_score = -1
+                for p in players_rewards:
+                    if p["is_winner"]:
+                        score = p["reward"]
+                        if score > mvp_score:
+                            mvp_score = score
+                            mvp_user_id = p["user_id"]
+                mvp_name = ""
+                if mvp_user_id:
+                    mvp_user = users_engine.get_user(mvp_user_id)
+                    mvp_name = mvp_user["first_name"] if mvp_user else "غير معروف"
 
                 clan_scores = {}
                 for p in players_rewards:
@@ -1037,21 +1098,23 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     text += f"🏆 الحركة الفائزة: {winning}\n"
                     text += f"عدد الفائزين: {len(winners)}\n"
+                if mvp_name:
+                    text += f"\n👑 **MVP الجولة:** {mvp_name} (+{mvp_score} نقطة)"
                 if current_event == "double_points":
-                    text += "🎁 نقاط مضاعفة!\n"
+                    text += "\n🎁 نقاط مضاعفة!"
                 if current_event == "reverse_win":
-                    text += "🔄 حدث عكس الفوز: الحركة الأقل فازت!\n"
+                    text += "\n🔄 حدث عكس الفوز: الحركة الأقل فازت!"
                 if current_event == "random_winner":
-                    text += "🎲 تم اختيار فائز عشوائي!\n"
+                    text += "\n🎲 تم اختيار فائز عشوائي!"
                 if prediction_winners:
                     names = ", ".join([users_engine.get_user(uid)["first_name"] for uid in prediction_winners[:5]])
-                    text += f"🔮 توقع صحيح: {names} (+{config.PREDICTION_BONUS})\n"
+                    text += f"\n🔮 توقع صحيح: {names} (+{config.PREDICTION_BONUS})"
                 if clan_scores:
                     sorted_clans = sorted(clan_scores.items(), key=lambda x: x[1], reverse=True)[:3]
-                    text += "\n🏰 **ترتيب العشائر:**\n"
+                    text += "\n\n🏰 **ترتيب العشائر:**"
                     for i, (clan, score) in enumerate(sorted_clans, 1):
-                        text += f"{i}. {clan} - {score} نقطة\n"
-                text += "\nاضغط لرؤية قائمة الأفضل:"
+                        text += f"\n{i}. {clan} - {score} نقطة"
+                text += "\n\nاضغط لرؤية قائمة الأفضل:"
             else:
                 text = "لم يشارك أحد في هذه الجولة."
 
@@ -1297,8 +1360,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     async with state.group_session_lock:
         if chat_id in state.group_game_sessions: return
-    asyncio.create_task(start_channel_game_cycle(chat_id, context))
-    await context.bot.send_message(chat_id, "🎮 تم تفعيل اللعب! يمكنك الضغط على الأزرار أدناه:", reply_markup=keyboards.group_game_menu(chat_id))
+    await context.bot.send_message(chat_id, "مرحباً بك في RPS Arena!", reply_markup=keyboards.channel_main_menu(chat_id))
 
 async def start_channel_game_cycle(chat_id, context: ContextTypes.DEFAULT_TYPE):
     pass
@@ -1325,6 +1387,7 @@ def main():
     app.add_handler(CommandHandler("teambattle", teambattle_command))
     app.add_handler(CommandHandler("web", web_command))
     app.add_handler(CommandHandler("game", game_command))
+    app.add_handler(CallbackQueryHandler(handle_move, pattern="^move_"))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
