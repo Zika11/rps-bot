@@ -1,5 +1,6 @@
 import sqlite3, json, logging
 from datetime import datetime, date
+import config
 
 DB = "rps_bot.db"
 
@@ -217,3 +218,55 @@ def add_clan_war_points(clan, amount):
     conn.execute("UPDATE clan_wars SET points2 = points2 + ? WHERE clan2=? AND active=1", (amount, clan))
     conn.commit()
     conn.close()
+
+# ---------- دالة التحديث الذري لنتيجة المباراة ----------
+def apply_game_result(user_id, result, move, opponent_id=None):
+    """
+    تحديث جميع إحصاءات المستخدم دفعة واحدة بناءً على نتيجة اللعب.
+    تُرجع السجل الجديد للمستخدم أو None لو المستخدم مش موجود.
+    """
+    conn = get_conn()
+    u = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
+    if not u:
+        conn.close()
+        return None
+
+    # حساب القيم الجديدة
+    wins = u["wins"] + (1 if result == "win" else 0)
+    losses = u["losses"] + (1 if result == "loss" else 0)
+    draws = u["draws"] + (1 if result == "draw" else 0)
+    points = u["points"] + (10 if result == "win" else (5 if result == "draw" else 0))
+    gems = u["gems"] + 1
+    rock_used = u["rock_used"] + (1 if move == "rock" else 0)
+    win_streak = u["win_streak"] + 1 if result == "win" else 0
+    streak_count = u["streak_count"] + 1 if result == "win" else max(0, u["streak_count"] - 1)
+
+    conn.execute("""
+        UPDATE users SET
+            wins = ?, losses = ?, draws = ?, points = ?, gems = ?,
+            rock_used = ?, win_streak = ?, streak_count = ?
+        WHERE user_id = ?
+    """, (wins, losses, draws, points, gems, rock_used, win_streak, streak_count, user_id))
+
+    # تحديث التصنيف Elo
+    rating = conn.execute("SELECT rating FROM ratings WHERE user_id=?", (user_id,)).fetchone()
+    rating = rating[0] if rating else config.DEFAULT_RATING
+    opp_rating = config.DEFAULT_RATING
+    if opponent_id:
+        opp = conn.execute("SELECT rating FROM ratings WHERE user_id=?", (opponent_id,)).fetchone()
+        if opp:
+            opp_rating = opp[0]
+    expected = 1 / (1 + 10 ** ((opp_rating - rating) / 400))
+    score = 1 if result == "win" else 0.5 if result == "draw" else 0
+    new_rating = int(rating + config.RATING_K * (score - expected))
+    conn.execute("UPDATE ratings SET rating = ? WHERE user_id = ?", (new_rating, user_id))
+
+    conn.commit()
+    conn.close()
+    return {
+        "user_id": user_id,
+        "wins": wins, "losses": losses, "draws": draws,
+        "points": points, "gems": gems, "win_streak": win_streak,
+        "rock_used": rock_used, "streak_count": streak_count,
+        "rating": new_rating
+    }
