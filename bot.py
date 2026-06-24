@@ -3,6 +3,9 @@ from datetime import datetime, date, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 import models, db, config, state, keyboards, game_logic, utils, handlers
+import engine.voting as voting
+import engine.rewards as channel_rewards
+import engine.state as channel_state
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -27,7 +30,7 @@ async def auto_drops(app):
     while True:
         await asyncio.sleep(600)
         if random.random() < config.DROP_CHANCE:
-            for chat_id in list(state.channel_settings.keys()):
+            for chat_id in list(channel_state.channel_settings.keys()):
                 reward = random.choice(config.DROP_REWARDS)
                 keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎁 افتح الصندوق!", callback_data=f"claim_drop_{reward[0]}_{reward[1]}")]])
                 try:
@@ -556,13 +559,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if move not in ["rock", "paper", "scissors"]:
             await query.answer("حركة غير صالحة!")
             return
-        # منع التصويت المتكرر
-        if await state.is_spam_vote(chat_id, user.id):
+        if await channel_state.is_spam_vote(chat_id, user.id):
             await query.answer("أنت تصوت بسرعة كبيرة! انتظر ثانيتين.")
             return
-        lock = await state.get_vote_lock(chat_id)
+        lock = await channel_state.get_vote_lock(chat_id)
         async with lock:
-            success = db.record_channel_vote(chat_id, user.id, move)
+            success = voting.record_channel_vote(chat_id, user.id, move)
         if success:
             await query.answer("تم تسجيل اختيارك! ✅")
         else:
@@ -584,12 +586,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if predicted_move not in ["rock", "paper", "scissors"]:
             await query.answer("حركة غير صالحة!")
             return
-        if await state.is_spam_vote(chat_id, user.id):
+        if await channel_state.is_spam_vote(chat_id, user.id):
             await query.answer("تم استلام توقعك بالفعل!")
             return
-        lock = await state.get_vote_lock(chat_id)
+        lock = await channel_state.get_vote_lock(chat_id)
         async with lock:
-            success = db.record_prediction(chat_id, user.id, predicted_move)
+            success = voting.record_prediction(chat_id, user.id, predicted_move)
         if success:
             await query.answer("تم تسجيل توقعك! 🔮")
         else:
@@ -859,13 +861,13 @@ async def process_spectate_pick(update, context, move, room_id):
         db.update_spectator_room(room_id, status="finished")
     await query.edit_message_text("تم تسجيل حركتك.")
 
-# ---------- حلقة التصويت التلقائي للقناة (Watchdog + Per-Channel Lock) ----------
+# ---------- حلقة التصويت التلقائي للقناة (تستخدم engine) ----------
 async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
     last_message_id = None
 
-    while state.channel_settings.get(chat_id):
+    while channel_state.channel_settings.get(chat_id):
         try:
-            settings = state.channel_settings.get(chat_id)
+            settings = channel_state.channel_settings.get(chat_id)
             if not settings:
                 break
             interval = settings.get("interval", 60)
@@ -889,7 +891,7 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 banned = config.BANNED_MOVE_EVENTS[current_event]
                 event_text = f"🚫 حدث: {banned} محظور هذه الجولة!"
 
-            db.start_channel_loop(chat_id, interval, ttl)
+            voting.start_channel_loop(chat_id, interval, ttl)
             try:
                 msg = await context.bot.send_message(
                     chat_id,
@@ -922,19 +924,19 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 raise
 
             # قفل القناة لإنهاء الجولة
-            lock = await state.get_vote_lock(chat_id)
+            lock = await channel_state.get_vote_lock(chat_id)
             async with lock:
-                result = db.finish_channel_round(chat_id)
+                result = voting.finish_channel_round(chat_id)
 
             # حذف رسالة التوقع
             try: await context.bot.delete_message(chat_id, pred_message_id)
             except: pass
 
             # معالجة التوقعات
-            predictions = db.get_predictions(chat_id)
+            predictions = voting.get_predictions(chat_id)
             prediction_winners = []
             if predictions and result and result["winning_moves"]:
-                win_move = result["winning_moves"][0]  # أول حركة فائزة
+                win_move = result["winning_moves"][0]
                 for uid, pred in predictions.items():
                     if pred == win_move:
                         prediction_winners.append(int(uid))
@@ -947,7 +949,6 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 is_draw = result["draw"]
                 bot_move = utils.markov_bot_choice(0)
 
-                # تجميع بيانات المكافآت
                 players_rewards = []
                 for uid, move in result["players"].items():
                     uid_int = int(uid)
@@ -963,19 +964,12 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                         "clan": db.get_user(uid_int).get("clan") if db.get_user(uid_int) else None
                     })
 
-                # دفعة واحدة
-                db.batch_process_channel_rewards_with_streak(chat_id, players_rewards, config.STREAK_BONUS)
+                channel_rewards.batch_process_channel_rewards_with_streak(chat_id, players_rewards, config.STREAK_BONUS)
 
-                # نقاط العشائر
                 clan_scores = {}
                 for p in players_rewards:
                     if p["clan"]:
                         clan_scores[p["clan"]] = clan_scores.get(p["clan"], 0) + p["reward"]
-
-                # حذف اللاعبين الذين اختاروا حركة محظورة من النتائج (لم يحصلوا على نقاط)
-                if current_event in config.BANNED_MOVE_EVENTS:
-                    banned_move = config.BANNED_MOVE_EVENTS[current_event]
-                    # نزيلهم من valid_choices (لكن لم نعد نملكهم هنا، يمكن تطبيقه في finish_channel_round لاحقاً)
 
                 text = "📊 **نتائج الجولة:**\n"
                 for move, cnt in counts.items():
@@ -1017,9 +1011,9 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"خطأ غير متوقع في حلقة القناة {chat_id}: {e}")
             await asyncio.sleep(5)
 
-    async with state.channel_settings_lock:
-        if chat_id in state.channel_settings:
-            del state.channel_settings[chat_id]
+    async with channel_state.channel_settings_lock:
+        if chat_id in channel_state.channel_settings:
+            del channel_state.channel_settings[chat_id]
 
 # ---------- أوامر القناة ----------
 async def start_channel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1038,14 +1032,14 @@ async def start_channel_command(update: Update, context: ContextTypes.DEFAULT_TY
     try:
         chat = await context.bot.get_chat(channel_name)
         chat_id = chat.id
-        async with state.channel_settings_lock:
-            if chat_id in state.channel_settings:
-                old_task = state.channel_settings[chat_id].get("task")
+        async with channel_state.channel_settings_lock:
+            if chat_id in channel_state.channel_settings:
+                old_task = channel_state.channel_settings[chat_id].get("task")
                 if old_task: old_task.cancel()
-                del state.channel_settings[chat_id]
+                del channel_state.channel_settings[chat_id]
         task = asyncio.create_task(channel_voting_loop(chat_id, context))
-        async with state.channel_settings_lock:
-            state.channel_settings[chat_id] = {"interval": interval, "ttl": ttl, "task": task}
+        async with channel_state.channel_settings_lock:
+            channel_state.channel_settings[chat_id] = {"interval": interval, "ttl": ttl, "task": task}
         await update.message.reply_text(f"تم بدء جولات التصويت التلقائي في {chat.title}\nالفاصل: {interval}s | حذف الرسالة: {ttl}s")
     except Exception as e:
         await update.message.reply_text(f"خطأ: {str(e)}")
@@ -1059,11 +1053,11 @@ async def stop_channel_command(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         chat = await context.bot.get_chat(context.args[0])
         chat_id = chat.id
-        async with state.channel_settings_lock:
-            if chat_id in state.channel_settings:
-                task = state.channel_settings[chat_id].get("task")
+        async with channel_state.channel_settings_lock:
+            if chat_id in channel_state.channel_settings:
+                task = channel_state.channel_settings[chat_id].get("task")
                 if task: task.cancel()
-                del state.channel_settings[chat_id]
+                del channel_state.channel_settings[chat_id]
                 await update.message.reply_text(f"تم إيقاف جولات التصويت في {chat.title}")
             else:
                 await update.message.reply_text("لا توجد جولات نشطة لهذه القناة.")
@@ -1100,8 +1094,8 @@ async def admin_set_points_prompt(update: Update, context: ContextTypes.DEFAULT_
 
 async def admin_channels_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    async with state.channel_settings_lock:
-        chans = list(state.channel_settings.keys())
+    async with channel_state.channel_settings_lock:
+        chans = list(channel_state.channel_settings.keys())
     text = "القنوات المفعلة:\n" + "\n".join([str(c) for c in chans]) if chans else "لا توجد"
     await query.edit_message_text(text, reply_markup=keyboards.admin_menu())
 
