@@ -286,9 +286,8 @@ async def spock_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = [InlineKeyboardButton(icon, callback_data=f"spockpick_{key}") for key, icon in SPOCK_CHOICES.items()]
     await query.edit_message_text("اختر حركتك (Spock):", reply_markup=InlineKeyboardMarkup([buttons]))
 
-# ---------- 🆕 تحديات المشاهدة (Spectator Mode) ----------
+# ---------- تحديات المشاهدة (Spectator) ----------
 async def challenge_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /challenge @username في مجموعة"""
     chat_id = update.effective_chat.id
     user = update.effective_user
     if not update.message.reply_to_message:
@@ -298,7 +297,6 @@ async def challenge_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if opponent.id == user.id:
         await update.message.reply_text("لا يمكنك تحدي نفسك.")
         return
-
     challenge_id = str(uuid.uuid4())[:8]
     async with state.spectate_lock:
         state.spectate_challenges[challenge_id] = {
