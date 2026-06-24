@@ -1,56 +1,85 @@
 import random
 
+# الاختيارات
+CHOICES = ["rock", "paper", "scissors"]
 
-# =========================
-# 🎮 GAME STATE CLASS
-# =========================
-class GameState:
-    def __init__(self):
-        self.solo_games = {}
-
-    def start_solo_game(self, user_id):
-        game_id = random.randint(1000, 9999)
-
-        self.solo_games[game_id] = {
-            "user_id": user_id
-        }
-
-        return game_id
-
-    def play_solo_round(self, game_id, player_choice):
-        if game_id not in self.solo_games:
-            return None
-
-        choices = ["rock", "paper", "scissors"]
-        bot_choice = random.choice(choices)
-
-        result = self.get_result(player_choice, bot_choice)
-
-        return {
-            "player": player_choice,
-            "bot": bot_choice,
-            "result": result
-        }
-
-    def finish_solo_game(self, game_id):
-        if game_id in self.solo_games:
-            del self.solo_games[game_id]
-
-    def get_result(self, player, bot):
-        if player == bot:
-            return "تعادل 🤝"
-
-        if (
-            (player == "rock" and bot == "scissors") or
-            (player == "paper" and bot == "rock") or
-            (player == "scissors" and bot == "paper")
-        ):
-            return "فوز 🎉"
-
-        return "خسارة 😢"
+# تحديد الفائز
+def determine_winner(player_choice, bot_choice):
+    if player_choice == bot_choice:
+        return "draw"
+    elif (
+        (player_choice == "rock" and bot_choice == "scissors") or
+        (player_choice == "paper" and bot_choice == "rock") or
+        (player_choice == "scissors" and bot_choice == "paper")
+    ):
+        return "win"
+    else:
+        return "lose"
 
 
-# =========================
-# 🔥 IMPORTANT (ده اللي كان ناقص)
-# =========================
-state = GameState()
+# اختيار البوت
+def get_bot_choice():
+    return random.choice(CHOICES)
+
+
+# تشغيل جولة كاملة
+def play_round(player_choice):
+    bot_choice = get_bot_choice()
+    result = determine_winner(player_choice, bot_choice)
+
+    return {
+        "player_choice": player_choice,
+        "bot_choice": bot_choice,
+        "result": result
+    }
+
+
+# تحديث إحصائيات اللاعب
+def update_stats(user_data, result):
+    if "wins" not in user_data:
+        user_data["wins"] = 0
+    if "losses" not in user_data:
+        user_data["losses"] = 0
+    if "draws" not in user_data:
+        user_data["draws"] = 0
+    if "games" not in user_data:
+        user_data["games"] = 0
+
+    user_data["games"] += 1
+
+    if result == "win":
+        user_data["wins"] += 1
+    elif result == "lose":
+        user_data["losses"] += 1
+    else:
+        user_data["draws"] += 1
+
+    return user_data
+
+
+# 🏆 نظام الإنجازات (FIX للمشكلة)
+def check_achievements(user_id, user_data=None):
+    """
+    فحص الإنجازات
+    """
+    achievements = []
+
+    if not user_data:
+        return achievements
+
+    wins = user_data.get("wins", 0)
+    games = user_data.get("games", 0)
+
+    # أول فوز
+    if wins >= 1:
+        achievements.append("🏆 أول فوز!")
+
+    # 10 انتصارات
+    if wins >= 10:
+        achievements.append("🔥 محترف!")
+
+    # 50 لعبة
+    if games >= 50:
+        achievements.append("🎮 مدمن لعب!")
+
+    return achievements
