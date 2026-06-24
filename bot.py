@@ -59,20 +59,17 @@ async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(profile_text)
 
-# ---------- معالج الأزرار الرئيسي (تم تعديله بالكامل) ----------
+# ---------- معالج الأزرار الرئيسي ----------
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     data = query.data
     await query.answer()
 
-    # الرجوع / إغلاق
     if data == "back_main":
         await query.edit_message_text("القائمة الرئيسية:", reply_markup=keyboards.main_menu())
     elif data == "delete_message":
         await query.delete_message()
-
-    # القائمة الرئيسية
     elif data == "game":
         await query.edit_message_text("اختر نمط اللعب:", reply_markup=keyboards.game_mode_menu())
     elif data == "friends":
@@ -119,7 +116,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.update_user(user.id, language=new_lang)
         await query.edit_message_text("تم تغيير اللغة", reply_markup=keyboards.main_menu(new_lang))
 
-    # أوضاع اللعب الخاص (القديمة)
+    # أوضاع اللعب الخاص
     elif data == "solo":
         state.active_games[user.id] = {"type": "solo", "chat_id": None}
         await query.edit_message_text("اختر حركتك:", reply_markup=keyboards.choice_buttons("solo"))
@@ -146,9 +143,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ألعاب المجموعة
     elif data.startswith("group_solo_"):
         chat_id = int(data.split("_")[-1])
-        # إنشاء لعبة فردية عامة
         state.group_solo_games[user.id] = {"chat_id": chat_id}
-        # إرسال أزرار الاختيار في المجموعة
         keyboard = keyboards.group_choice_buttons(chat_id, user.id)
         sent = await context.bot.send_message(chat_id, f"🎮 {user.first_name} يلعب ضد البوت. اختر حركتك:", reply_markup=keyboard)
         state.group_solo_games[user.id]["message_id"] = sent.message_id
@@ -174,7 +169,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = int(data.split("_")[-1])
         await accept_open_challenge(update, context, chat_id)
 
-    # اختيار الحركات (خاص، عشوائي، سبوك، مجموعات فردية، تحديات)
+    # اختيار الحركات
     elif data.startswith("pick_"):
         parts = data.split("_")
         if len(parts) < 3: return
@@ -189,7 +184,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await process_move(update, context, move, game_type)
     elif data.startswith("group_pick_"):
-        # اختيار حركة للفردي الجماعي
         parts = data.split("_")
         move = parts[2]
         chat_id = int(parts[3])
@@ -252,13 +246,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("join_tournament_"):
         await handlers.join_tournament_handler(update, context)
 
-    # تحديات المشاهدة (Spectator)
+    # تحديات المشاهدة
     elif data.startswith("accept_challenge_"):
         await handlers.accept_challenge(update, context)
     elif data.startswith("reject_challenge_"):
         await handlers.reject_challenge(update, context)
 
-# ---------- دوال الألعاب الفردية ----------
+# ---------- دوال الألعاب الفردية (خاص) ----------
 async def process_move(update, context, move, game_type):
     query = update.callback_query
     user = query.from_user
@@ -284,12 +278,24 @@ async def process_move(update, context, move, game_type):
         else:
             await query.edit_message_text("تم تسجيل حركتك، بانتظار الخصم...")
 
+async def process_spock_move(update, context, move):
+    query = update.callback_query
+    user = query.from_user
+    from config import SPOCK_CHOICES, SPOCK_WIN_MAP
+    bot_move = random.choice(list(SPOCK_CHOICES.keys()))
+    if move == bot_move:
+        result = "draw"
+    elif bot_move in SPOCK_WIN_MAP[move]:
+        result = "win"
+    else:
+        result = "loss"
+    await finish_game(update, context, user.id, move, bot_move, result, spock=True)
+
 async def finish_game(update, context, user_id, user_move, opp_move, result, spock=False):
     game = state.active_games.get(user_id)
     opponent_id = game.get("opponent") if game else None
     updated = db.apply_game_result(user_id, result, user_move, opponent_id)
-    if not updated:
-        return
+    if not updated: return
     theme = utils.get_choices_for_user(user_id)
     user_icon = theme.get(user_move, user_move)
     opp_icon = theme.get(opp_move, opp_move)
@@ -302,7 +308,7 @@ async def finish_game(update, context, user_id, user_move, opp_move, result, spo
     utils.update_user_moves(user_id, user_move)
     await state.remove_game(user_id)
 
-# ---------- 🆕 اللعب الفردي الجماعي (عام) ----------
+# ---------- اللعب الفردي الجماعي ----------
 async def process_group_solo_pick(update, context, move, chat_id, player_id):
     query = update.callback_query
     user = query.from_user
@@ -313,7 +319,6 @@ async def process_group_solo_pick(update, context, move, chat_id, player_id):
     if not game or game["chat_id"] != chat_id:
         await query.answer("انتهت اللعبة.")
         return
-    # حذف أزرار الاختيار
     try:
         await context.bot.delete_message(chat_id, game["message_id"])
     except: pass
@@ -332,7 +337,7 @@ async def process_group_solo_pick(update, context, move, chat_id, player_id):
     state.group_solo_games.pop(player_id, None)
     await query.answer("تم إرسال النتيجة إلى المجموعة.")
 
-# ---------- 🆕 التحدي المفتوح (Open Challenge) ----------
+# ---------- التحدي المفتوح ----------
 async def start_open_challenge(update, context, chat_id):
     query = update.callback_query
     user = query.from_user
@@ -340,7 +345,6 @@ async def start_open_challenge(update, context, chat_id):
         if chat_id in state.open_challenges:
             await query.answer("يوجد بالفعل تحدي مفتوح في هذه المجموعة!")
             return
-        # إرسال أزرار الاختيار للبادئ في الخاص
         await context.bot.send_message(user.id, "اختر حركتك للتحدي المفتوح:", reply_markup=keyboards.choice_buttons(f"open_{chat_id}"))
         state.open_challenges[chat_id] = {
             "initiator": user.id,
@@ -362,7 +366,6 @@ async def process_open_pick(update, context, move, chat_id):
             return
         challenge["move"] = move
         await query.edit_message_text("تم اختيار حركتك. سيتم الإعلان في المجموعة...")
-        # إرسال إعلان في المجموعة
         try:
             msg = await context.bot.send_message(
                 chat_id,
@@ -370,7 +373,6 @@ async def process_open_pick(update, context, move, chat_id):
                 reply_markup=keyboards.open_challenge_accept_button(chat_id)
             )
             challenge["message_id"] = msg.message_id
-            # إلغاء تلقائي بعد 60 ثانية
             asyncio.create_task(auto_cancel_open_challenge(chat_id, context))
         except Exception as e:
             logger.error(f"فشل إرسال إعلان التحدي: {e}")
@@ -382,10 +384,7 @@ async def auto_cancel_open_challenge(chat_id, context):
         challenge = state.open_challenges.get(chat_id)
         if challenge:
             try:
-                await context.bot.edit_message_text(
-                    chat_id, challenge["message_id"],
-                    text="⏰ انتهت صلاحية التحدي المفتوح."
-                )
+                await context.bot.edit_message_text(chat_id, challenge["message_id"], text="⏰ انتهت صلاحية التحدي المفتوح.")
             except: pass
             state.open_challenges.pop(chat_id, None)
 
@@ -439,53 +438,113 @@ async def process_open_acceptor_pick(update, context, move, chat_id):
         state.open_challenges.pop(chat_id, None)
     await query.edit_message_text("تم إرسال النتيجة إلى المجموعة.")
 
-# ---------- دورة اللعب الجماعي التلقائي (عشوائي) ----------
-async def start_group_game_cycle(chat_id, context: ContextTypes.DEFAULT_TYPE):
+# ---------- دورة اللعب التلقائي (للجروبات والقنوات) ----------
+async def start_channel_game_cycle(chat_id, context: ContextTypes.DEFAULT_TYPE):
+    """دورة لا نهائية للقنوات والجروبات مع إعدادات مخصصة"""
     while True:
+        async with state.channel_settings_lock:
+            settings = state.channel_settings.get(chat_id)
+            if not settings:
+                break
+            interval = settings.get("interval", 120)
+            ttl = settings.get("ttl", 60)
+        # إنشاء جلسة جديدة إذا كانت للعبة العشوائية (للقنوات قد لا تحتاج)
         async with state.group_session_lock:
             session = {"players": set(), "task": asyncio.current_task()}
             state.group_game_sessions[chat_id] = session
         try:
             msg = await context.bot.send_message(
                 chat_id,
-                "🎮 **بدأت جولة جديدة!** (تنتهي خلال دقيقتين)\nاختر نمط لعبك أو انضم للعشوائي:",
+                "🎮 **بدأت جولة جديدة!** (تنتهي قريباً)\nاختر نمط لعبك أو انضم للعشوائي:",
                 reply_markup=keyboards.group_game_menu(chat_id)
             )
-            session["message_id"] = msg.message_id
+            # تخزين معرف الرسالة للحذف التلقائي لاحقاً
+            async with state.channel_settings_lock:
+                if chat_id in state.channel_settings:
+                    state.channel_settings[chat_id]["message_id"] = msg.message_id
         except Exception as e:
-            logger.error(f"فشل إرسال رسالة الجولة: {e}")
-            async with state.group_session_lock:
-                state.group_game_sessions.pop(chat_id, None)
+            logger.error(f"فشل إرسال رسالة الجولة إلى {chat_id}: {e}")
             break
-        await asyncio.sleep(120)
+
+        # حذف الرسالة بعد مدة ttl
+        async def delete_after(chat_id, msg_id, delay):
+            await asyncio.sleep(delay)
+            try:
+                await context.bot.delete_message(chat_id, msg_id)
+            except: pass
+
+        asyncio.create_task(delete_after(chat_id, msg.message_id, ttl))
+
+        # انتظار فترة interval قبل الجولة التالية (مع مراعاة أن الرسالة قد حذفت بالفعل)
+        await asyncio.sleep(interval)
+
+        # معالجة اللاعبين العشوائيين (اختياري - كما سبق)
         async with state.group_session_lock:
             players = list(session["players"])
             state.group_game_sessions.pop(chat_id, None)
-        if players:
-            random.shuffle(players)
-            pairs = []
-            while len(players) >= 2:
-                p1 = players.pop()
-                p2 = players.pop()
-                pairs.append((p1, p2))
-            solo_player = players[0] if players else None
-            for p1, p2 in pairs:
-                # إرسال تعليمات الاختيار في الخاص
-                await context.bot.send_message(p1, "🎲 تم إقرانك بلاعب! اختر حركتك:", reply_markup=keyboards.choice_buttons(f"group_random_{chat_id}"))
-                await context.bot.send_message(p2, "🎲 تم إقرانك بلاعب! اختر حركتك:", reply_markup=keyboards.choice_buttons(f"group_random_{chat_id}"))
-            if solo_player:
-                await context.bot.send_message(solo_player, "🎮 أنت الوحيد! العب ضد البوت:", reply_markup=keyboards.choice_buttons(f"group_{chat_id}"))
-        # انتظار 60 ثانية قبل الجولة التالية
-        await asyncio.sleep(60)
+        # يمكن تفعيل العشوائي كما في النسخ السابقة، لكن للقناة قد لا نريد ذلك
+        # سنتركه فارغاً للقنوات (أو نضيفه إذا أردت)
 
-async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    async with state.group_session_lock:
-        if chat_id in state.group_game_sessions:
+# ---------- أمر بدء دورة القناة (للمؤسس) ----------
+async def start_channel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not utils.is_founder(update.effective_user.id):
+        await update.message.reply_text("غير مسموح")
+        return
+    try:
+        args = context.args
+        if not args:
+            await update.message.reply_text("استخدم: /start_channel @channelname [interval=120] [ttl=60]")
             return
-    asyncio.create_task(start_group_game_cycle(chat_id, context))
-    await context.bot.send_message(chat_id, "🎮 تم تفعيل اللعب! يمكنك الضغط على الأزرار أدناه:", reply_markup=keyboards.group_game_menu(chat_id))
+        channel_name = args[0]
+        interval = 120
+        ttl = 60
+        for a in args[1:]:
+            if a.startswith("interval="):
+                interval = int(a.split("=")[1])
+            elif a.startswith("ttl="):
+                ttl = int(a.split("=")[1])
+        chat = await context.bot.get_chat(channel_name)
+        chat_id = chat.id
+        async with state.channel_settings_lock:
+            if chat_id in state.channel_settings:
+                # إيقاف الدورة السابقة إذا وجدت
+                old_task = state.channel_settings[chat_id].get("task")
+                if old_task:
+                    old_task.cancel()
+            task = asyncio.create_task(start_channel_game_cycle(chat_id, context))
+            state.channel_settings[chat_id] = {
+                "interval": interval,
+                "ttl": ttl,
+                "task": task,
+                "message_id": None
+            }
+        await update.message.reply_text(f"تم بدء الدورة في {chat.title}\nالفاصل: {interval}s | حذف الرسالة بعد: {ttl}s")
+    except Exception as e:
+        await update.message.reply_text(f"خطأ: {str(e)}")
 
-# ---------- معالج النصوص (يشمل @mention) ----------
+# ---------- أمر إيقاف دورة القناة ----------
+async def stop_channel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not utils.is_founder(update.effective_user.id):
+        return
+    try:
+        if not context.args:
+            await update.message.reply_text("استخدم: /stop_channel @channelname")
+            return
+        chat = await context.bot.get_chat(context.args[0])
+        chat_id = chat.id
+        async with state.channel_settings_lock:
+            if chat_id in state.channel_settings:
+                task = state.channel_settings[chat_id].get("task")
+                if task:
+                    task.cancel()
+                del state.channel_settings[chat_id]
+                await update.message.reply_text(f"تم إيقاف الدورة في {chat.title}")
+            else:
+                await update.message.reply_text("لا توجد دورة نشطة لهذه القناة.")
+    except Exception as e:
+        await update.message.reply_text(f"خطأ: {str(e)}")
+
+# ---------- معالج النصوص (يشمل @mention للجروبات) ----------
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     msg = update.message.text.strip() if update.message.text else ""
@@ -522,12 +581,20 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"تحدي صديق قيد التطوير (سيتم إعلام {target['first_name']}).")
             context.user_data["awaiting_friend_challenge"] = False
 
+async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    # بدء دورة عادية للجروب (بدون إعدادات مخصصة)
+    async with state.group_session_lock:
+        if chat_id in state.group_game_sessions:
+            return
+    asyncio.create_task(start_channel_game_cycle(chat_id, context))
+    await context.bot.send_message(chat_id, "🎮 تم تفعيل اللعب! يمكنك الضغط على الأزرار أدناه:", reply_markup=keyboards.group_game_menu(chat_id))
+
 # ---------- أوامر المؤسس ----------
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not utils.is_founder(update.effective_user.id):
         await update.message.reply_text("غير مسموح")
         return
-    await update.message.reply_text("لوحة التحكم:\n/start_war لبدء حرب عشائر")
+    await update.message.reply_text("لوحة التحكم:\n/start_war لبدء حرب عشائر\n/start_channel @channel interval=120 ttl=60\n/stop_channel @channel")
 
 async def start_war_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not utils.is_founder(update.effective_user.id):
@@ -541,6 +608,8 @@ def main():
     app.add_handler(CommandHandler("me", me_command))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("start_war", start_war_command))
+    app.add_handler(CommandHandler("start_channel", start_channel_command))
+    app.add_handler(CommandHandler("stop_channel", stop_channel_command))
     app.add_handler(CommandHandler("challenge", handlers.challenge_start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
