@@ -1,8 +1,5 @@
 import sqlite3, json, logging
 from datetime import datetime, date
-from config import *
-
-logging.basicConfig(level=logging.INFO)
 
 DB = "rps_bot.db"
 
@@ -11,7 +8,6 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
-# ---------- المستخدمين ----------
 def get_user(user_id):
     conn = get_conn()
     row = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
@@ -38,8 +34,7 @@ def create_user(user_id, username, first_name, language='ar'):
         conn.close()
 
 def update_user(user_id, **kwargs):
-    if not kwargs:
-        return
+    if not kwargs: return
     conn = get_conn()
     fields = ', '.join(f"{k}=?" for k in kwargs)
     values = list(kwargs.values())
@@ -54,16 +49,9 @@ def get_all_user_ids():
     conn.close()
     return [r[0] for r in rows]
 
-# ---------- العشائر ----------
 def get_clan(clan_name):
     conn = get_conn()
     row = conn.execute("SELECT * FROM clans WHERE name=?", (clan_name,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-def get_clan_by_leader(leader_id):
-    conn = get_conn()
-    row = conn.execute("SELECT * FROM clans WHERE leader_id=?", (leader_id,)).fetchone()
     conn.close()
     return dict(row) if row else None
 
@@ -93,27 +81,18 @@ def get_all_clans():
     conn.close()
     return [dict(r) for r in rows]
 
-def get_clan_members(clan_name):
-    conn = get_conn()
-    rows = conn.execute("SELECT user_id, first_name, points FROM users WHERE clan=?", (clan_name,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-# ---------- المهام ----------
 def get_tasks():
     conn = get_conn()
     rows = conn.execute("SELECT * FROM tasks").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
-# ---------- المتجر ----------
 def get_shop_items():
     conn = get_conn()
     rows = conn.execute("SELECT * FROM shop").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
-# ---------- التصنيف ----------
 def get_user_rating(user_id):
     conn = get_conn()
     row = conn.execute("SELECT rating FROM ratings WHERE user_id=?", (user_id,)).fetchone()
@@ -136,7 +115,6 @@ def get_top_ratings(limit=10):
     conn.close()
     return [dict(r) for r in rows]
 
-# ---------- الأصدقاء ----------
 def send_friend_request(sender, receiver):
     conn = get_conn()
     try:
@@ -174,7 +152,6 @@ def get_friends(user_id):
     conn.close()
     return [r[0] for r in rows]
 
-# ---------- البطولات ----------
 def create_tournament(name):
     conn = get_conn()
     cur = conn.execute("INSERT INTO tournaments (name, status) VALUES (?, 'open')", (name,))
@@ -210,7 +187,6 @@ def update_tournament(tour_id, **kwargs):
     conn.commit()
     conn.close()
 
-# ---------- الإنجازات ----------
 def get_achievements():
     conn = get_conn()
     rows = conn.execute("SELECT * FROM achievements").fetchall()
@@ -229,7 +205,6 @@ def add_achievement(user_id, ach_id):
     conn.close()
     return True
 
-# ---------- حرب العشائر ----------
 def get_active_clan_war():
     conn = get_conn()
     row = conn.execute("SELECT * FROM clan_wars WHERE active=1").fetchone()
