@@ -1,5 +1,5 @@
 import json, logging, asyncio, random, sqlite3
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 import models, db, config, state, keyboards, game_logic, utils, handlers
@@ -151,7 +151,6 @@ async def battlepass_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text += "\n"
     await update.message.reply_text(text, reply_markup=keyboards.battlepass_button())
 
-# ---------- أمر البيع في السوق ----------
 async def market_sell_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     args = context.args
@@ -165,7 +164,6 @@ async def market_sell_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if price_type not in ["points", "gems"]:
         await update.message.reply_text("العملة يجب أن تكون points أو gems")
         return
-    # التحقق من الامتلاك (مبسط)
     owned = False
     u = db.get_user(user.id)
     if item_type == "theme" and u.get("theme") == item_id:
@@ -300,6 +298,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("accept_open_"):
         chat_id = int(data.split("_")[-1])
         await accept_open_challenge(update, context, chat_id)
+    elif data.startswith("spectate_"):
+        chat_id = int(data.split("_")[-1])
+        await handlers.spectate_room_create(update, context)
 
     # اختيار الحركات
     elif data.startswith("pick_"):
@@ -319,7 +320,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif game_type == "random":
             await process_random_pick(update, context, move, game_id)
         elif game_type == "tournament":
-            # game_id هنا هو tour_id, tail = "matchIndex_move"
             try:
                 tour_id = game_id
                 match_index, move = tail.rsplit("_", 1)
@@ -327,6 +327,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except:
                 return
             await process_tournament_pick(update, context, move, tour_id, match_index)
+        elif game_type == "spectate":
+            await process_spectate_pick(update, context, move, game_id)
     elif data.startswith("group_pick_"):
         parts = data.split("_")
         move = parts[2]
@@ -431,6 +433,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handlers.clan_join(update, context)
     elif data == "clan_ranking":
         await handlers.clan_ranking(update, context)
+    elif data == "clan_treasury":
+        await handlers.clan_treasury_menu(update, context)
+    elif data.startswith("treasury_view_"):
+        await handlers.treasury_view(update, context)
+    elif data.startswith("treasury_donate_points_"):
+        await handlers.treasury_donate_points(update, context)
+    elif data.startswith("treasury_donate_gems_"):
+        await handlers.treasury_donate_gems(update, context)
+    elif data.startswith("treasury_upgrade_"):
+        await handlers.treasury_upgrade(update, context)
+    elif data.startswith("do_upgrade_"):
+        await handlers.do_upgrade(update, context)
+    elif data == "clan_war_info":
+        await handlers.clan_war_info(update, context)
 
     # البطولات
     elif data == "tournament":
@@ -443,6 +459,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handlers.accept_challenge(update, context)
     elif data.startswith("reject_challenge_"):
         await handlers.reject_challenge(update, context)
+    elif data.startswith("spectate_join_"):
+        await handlers.spectate_join(update, context)
+
+    # World Boss
+    elif data == "boss_attack":
+        await handlers.boss_attack(update, context)
+    elif data == "boss_status":
+        await handlers.boss_command(update, context)
 
 # ---------- دوال اللعب الأساسية ----------
 async def process_solo_pick(update, context, move, game_id):
@@ -516,7 +540,6 @@ async def process_spock_move(update, context, move):
     await query.edit_message_text(text)
     state.finish_solo_game(game_id)
 
-# ---------- ألعاب المجموعة الفردية ----------
 async def process_group_solo_pick(update, context, move, chat_id, player_id, game_id):
     query = update.callback_query
     user = query.from_user
@@ -634,18 +657,16 @@ async def process_tournament_pick(update, context, move, tour_id, match_index):
     user = query.from_user
     tour = db.get_tournament(tour_id)
     if not tour: return
-    bracket = json.loads(tour["bracket"])
+    bracket = json.loads(tour.get("bracket", "{}"))
     current_round = tour["current_round"]
     round_key = f"round{current_round}"
     matches = bracket.get(round_key, [])
     if match_index >= len(matches): return
     match = matches[match_index]
-    # تسجيل الحركة
     match_data = json.loads(tour.get("match_data", "{}"))
     match_data[str(match_index)] = match_data.get(str(match_index), {})
     match_data[str(match_index)][str(user.id)] = move
     db.update_tournament(tour_id, match_data=json.dumps(match_data))
-    # إذا اكتملت الحركات
     if str(match["p1"]) in match_data[str(match_index)] and str(match["p2"]) in match_data[str(match_index)]:
         m1 = match_data[str(match_index)][str(match["p1"])]
         m2 = match_data[str(match_index)][str(match["p2"])]
@@ -654,10 +675,8 @@ async def process_tournament_pick(update, context, move, tour_id, match_index):
         match["winner"] = winner
         bracket[round_key][match_index] = match
         db.update_tournament(tour_id, bracket=json.dumps(bracket))
-        # تقدم للجولة التالية؟
         if current_round == 1:
-            # تجميع الفائزين وتكوين نصف النهائي
-            winners = [m["winner"] for m in bracket["round1"] if m["winner"] is not None]
+            winners = [m["winner"] for m in bracket["round1"] if m.get("winner") is not None]
             if len(winners) == 4:
                 bracket["round2"] = [{"p1": winners[0], "p2": winners[1]}, {"p1": winners[2], "p2": winners[3]}]
                 db.update_tournament(tour_id, bracket=json.dumps(bracket), current_round=2)
@@ -665,7 +684,7 @@ async def process_tournament_pick(update, context, move, tour_id, match_index):
                     await context.bot.send_message(m2["p1"], f"🏆 نصف النهائي! اختر حركتك:", reply_markup=keyboards.tournament_choice_buttons(tour_id, i))
                     await context.bot.send_message(m2["p2"], f"🏆 نصف النهائي! اختر حركتك:", reply_markup=keyboards.tournament_choice_buttons(tour_id, i))
         elif current_round == 2:
-            winners = [m["winner"] for m in bracket["round2"] if m["winner"] is not None]
+            winners = [m["winner"] for m in bracket["round2"] if m.get("winner") is not None]
             if len(winners) == 2:
                 bracket["final"] = [{"p1": winners[0], "p2": winners[1]}]
                 db.update_tournament(tour_id, bracket=json.dumps(bracket), current_round=3)
@@ -673,16 +692,45 @@ async def process_tournament_pick(update, context, move, tour_id, match_index):
                     await context.bot.send_message(mf["p1"], f"🏆 النهائي! اختر حركتك:", reply_markup=keyboards.tournament_choice_buttons(tour_id, i))
                     await context.bot.send_message(mf["p2"], f"🏆 النهائي! اختر حركتك:", reply_markup=keyboards.tournament_choice_buttons(tour_id, i))
         elif current_round == 3:
-            # البطولة انتهت
             final_winner = match["winner"]
             if final_winner:
-                db.update_user(final_winner, tournament_wins=1, points=db.get_user(final_winner)["points"]+200)
+                db.update_user(final_winner, tournament_wins=db.get_user(final_winner).get("tournament_wins",0)+1, points=db.get_user(final_winner)["points"]+200)
                 await context.bot.send_message(final_winner, "🎉 أنت بطل البطولة! ربحت 200 نقطة.")
             db.update_tournament(tour_id, status="finished")
     await query.edit_message_text("تم تسجيل حركتك.")
 
-# في handlers.join_tournament_handler بعد اكتمال 8 لاعبين، نبدأ البطولة:
-# (قمنا بتعديلها في handlers.py مباشرة، لكن نضيف المنطق هنا لو أردت)
+# ---------- غرفة المشاهدة ----------
+async def process_spectate_pick(update, context, move, room_id):
+    query = update.callback_query
+    user = query.from_user
+    room = db.get_spectator_room(room_id)
+    if not room or room["status"] != "active":
+        await query.edit_message_text("انتهت الغرفة.")
+        return
+    if user.id not in (room["player1"], room["player2"]):
+        await query.edit_message_text("لست مشاركاً في هذه المباراة.")
+        return
+    moves = json.loads(room["moves"] or "{}")
+    moves[str(user.id)] = move
+    db.update_spectator_room(room_id, moves=json.dumps(moves))
+    p1, p2 = room["player1"], room["player2"]
+    if str(p1) in moves and str(p2) in moves:
+        m1 = moves[str(p1)]
+        m2 = moves[str(p2)]
+        res1 = game_logic.get_result(m1, m2)
+        db.apply_game_result(p1, res1, m1, p2)
+        res2 = "loss" if res1 == "win" else ("win" if res1 == "loss" else "draw")
+        db.apply_game_result(p2, res2, m2, p1)
+        u1 = db.get_user(p1)
+        u2 = db.get_user(p2)
+        theme1 = utils.get_choices_for_user(p1)
+        theme2 = utils.get_choices_for_user(p2)
+        icon1 = theme1.get(m1, m1)
+        icon2 = theme2.get(m2, m2)
+        text = f"👀 **نتيجة مباراة المشاهدة**\n{u1['first_name']} اختار {icon1}\n{u2['first_name']} اختار {icon2}\nالنتيجة: {res1} لصالح {u1['first_name']}"
+        await context.bot.send_message(room["chat_id"], text)
+        db.update_spectator_room(room_id, status="finished")
+    await query.edit_message_text("تم تسجيل حركتك.")
 
 # ---------- دورة اللعب التلقائي للقنوات والمجموعات ----------
 async def start_channel_game_cycle(chat_id, context: ContextTypes.DEFAULT_TYPE):
@@ -875,6 +923,8 @@ def main():
     app.add_handler(CommandHandler("referral", referral_command))
     app.add_handler(CommandHandler("battlepass", battlepass_command))
     app.add_handler(CommandHandler("sell", market_sell_command))
+    app.add_handler(CommandHandler("season", handlers.season_command))
+    app.add_handler(CommandHandler("boss", handlers.boss_command))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
     app.add_handler(CommandHandler("set_points", set_points_command))
