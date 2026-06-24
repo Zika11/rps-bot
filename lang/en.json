@@ -1,8 +1,0 @@
-{
-  "welcome": "Welcome {name}! 👋\n\n🎮 Rock Paper Scissors\n💰 Balance: {points} points\n🏅 Rank: #{rank}\n\nChoose from the menu 👇",
-  "banned": "🚫 You are banned.",
-  "daily_reward": "🎁 Day {streak} reward! You got {reward} points.",
-  "language_changed": "✅ Language changed to English.",
-  "clan_war_start": "⚔️ Clan war started! Ends in {days} days.",
-  "event_info": "🎉 *Current Event: {name}*\nEnds: {end}\n🎯 *Special Tasks:*\n{tasks}"
-}
