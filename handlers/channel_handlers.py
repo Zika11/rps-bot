@@ -3,7 +3,7 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import db, config, keyboards
-import engine.state as channel_state
+import state as channel_state          # ✅ تغيير هنا
 import engine.users as users_engine
 from engine.game_engine import GameEngine
 import utils
