@@ -9,7 +9,7 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
-# --- دوال المستخدمين الأساسية (موجودة أيضاً في engine/users.py) ---
+# ===================== دوال المستخدمين الأساسية (من engine/users.py) =====================
 def get_user(user_id):
     conn = get_conn()
     row = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
@@ -51,7 +51,114 @@ def get_all_user_ids():
     conn.close()
     return [r[0] for r in rows]
 
-# --- العشائر ---
+# ===================== دوال الاقتصاد والمتجر (من engine/economy.py) =====================
+def buy_item(user_id, item_type, item_id):
+    """شراء أي عنصر من المتجر (بطاقة، لقب، ثيم، إطار، قدرة)"""
+    conn = get_conn()
+    u = conn.execute("SELECT points, gems, shop_items, theme, title FROM users WHERE user_id=?", (user_id,)).fetchone()
+    if not u:
+        conn.close()
+        return False, "المستخدم غير موجود"
+
+    price = None
+    # تحديد السعر حسب النوع
+    if item_type == "booster":
+        item = conn.execute("SELECT * FROM shop WHERE item_id=?", (item_id,)).fetchone()
+        if not item:
+            conn.close()
+            return False, "العنصر غير موجود"
+        price = item["price"]
+    elif item_type == "title":
+        row = conn.execute("SELECT * FROM titles_shop WHERE title_id=?", (item_id,)).fetchone()
+        if not row:
+            conn.close()
+            return False, "اللقب غير موجود"
+        price = row["price"]
+    elif item_type == "theme":
+        row = conn.execute("SELECT * FROM themes_shop WHERE theme_id=?", (item_id,)).fetchone()
+        if not row:
+            conn.close()
+            return False, "الثيم غير موجود"
+        price = row["price"]
+    elif item_type == "frame":
+        price = config.FRAME_PRICES.get(item_id)
+        if not price:
+            conn.close()
+            return False, "الإطار غير موجود"
+    elif item_type == "ability":
+        cost = config.ABILITIES[item_id]["cost"]
+        if not cost:
+            conn.close()
+            return False, "القدرة غير موجودة"
+        price = cost
+    else:
+        conn.close()
+        return False, "نوع غير معروف"
+
+    # التحقق من النقاط الكافية
+    if u["points"] < price:
+        conn.close()
+        return False, "نقاط غير كافية"
+
+    # خصم النقاط
+    new_points = u["points"] - price
+    conn.execute("UPDATE users SET points = ? WHERE user_id = ?", (new_points, user_id))
+
+    # إضافة العنصر للمستخدم حسب النوع
+    if item_type == "booster":
+        owned = (u["shop_items"] or "").split(",")
+        owned.append(item_id)
+        conn.execute("UPDATE users SET shop_items = ? WHERE user_id = ?", (",".join(owned), user_id))
+    elif item_type == "title":
+        conn.execute("UPDATE users SET title = ? WHERE user_id = ?", (item_id, user_id))
+    elif item_type == "theme":
+        conn.execute("UPDATE users SET theme = ? WHERE user_id = ?", (item_id, user_id))
+    elif item_type == "frame":
+        set_user_frame(user_id, item_id)
+    elif item_type == "ability":
+        conn.execute("INSERT OR IGNORE INTO user_abilities (user_id) VALUES (?)", (user_id,))
+        conn.execute(f"UPDATE user_abilities SET {item_id} = {item_id} + 1 WHERE user_id = ?", (user_id,))
+
+    conn.commit()
+    conn.close()
+    return True, "تم الشراء بنجاح"
+
+def get_ability_count(user_id, ability):
+    conn = get_conn()
+    row = conn.execute(f"SELECT {ability} FROM user_abilities WHERE user_id=?", (user_id,)).fetchone()
+    if not row:
+        conn.execute("INSERT OR IGNORE INTO user_abilities (user_id) VALUES (?)", (user_id,))
+        conn.commit()
+        row = conn.execute(f"SELECT {ability} FROM user_abilities WHERE user_id=?", (user_id,)).fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+def use_ability(user_id, ability):
+    conn = get_conn()
+    count = conn.execute(f"SELECT {ability} FROM user_abilities WHERE user_id=?", (user_id,)).fetchone()
+    if not count or count[0] <= 0:
+        conn.close()
+        return False
+    conn.execute(f"UPDATE user_abilities SET {ability} = {ability} - 1 WHERE user_id=?", (user_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+def buy_ability(user_id, ability):
+    cost = config.ABILITIES[ability]["cost"]
+    conn = get_conn()
+    u = conn.execute("SELECT points FROM users WHERE user_id=?", (user_id,)).fetchone()
+    if not u or u["points"] < cost:
+        conn.close()
+        return False
+    conn.execute("UPDATE users SET points = points - ? WHERE user_id=?", (cost, user_id))
+    conn.execute("INSERT OR IGNORE INTO user_abilities (user_id) VALUES (?)", (user_id,))
+    conn.execute(f"UPDATE user_abilities SET {ability} = {ability} + 1 WHERE user_id=?", (user_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+# ===================== دوال العشائر =====================
 def get_clan(clan_name):
     conn = get_conn()
     row = conn.execute("SELECT * FROM clans WHERE name=?", (clan_name,)).fetchone()
@@ -84,6 +191,7 @@ def get_all_clans():
     conn.close()
     return [dict(r) for r in rows]
 
+# ===================== دوال المهام والإنجازات والمتجر =====================
 def get_tasks():
     conn = get_conn()
     rows = conn.execute("SELECT * FROM tasks").fetchall()
@@ -118,7 +226,7 @@ def get_top_ratings(limit=10):
     conn.close()
     return [dict(r) for r in rows]
 
-# --- الأصدقاء ---
+# ===================== دوال الأصدقاء =====================
 def send_friend_request(sender, receiver):
     conn = get_conn()
     try:
@@ -156,7 +264,7 @@ def get_friends(user_id):
     conn.close()
     return [r[0] for r in rows]
 
-# --- البطولات ---
+# ===================== دوال البطولات =====================
 def create_tournament(name):
     conn = get_conn()
     cur = conn.execute("INSERT INTO tournaments (name, status) VALUES (?, 'open')", (name,))
@@ -210,6 +318,7 @@ def add_achievement(user_id, ach_id):
     conn.close()
     return True
 
+# ===================== دوال حرب العشائر =====================
 def get_active_clan_war():
     conn = get_conn()
     row = conn.execute("SELECT * FROM clan_wars WHERE active=1").fetchone()
@@ -223,6 +332,7 @@ def add_clan_war_points(clan, amount):
     conn.commit()
     conn.close()
 
+# ===================== دوال تطبيق نتيجة المباراة =====================
 def apply_game_result(user_id, result, move, opponent_id=None):
     conn = get_conn()
     u = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
@@ -279,7 +389,7 @@ def apply_game_result(user_id, result, move, opponent_id=None):
         "rating": new_rating
     }
 
-# --- دوال الميزات السابقة ---
+# ===================== دوال المكافآت اليومية و Battle Pass =====================
 def claim_daily(user_id):
     conn = get_conn()
     today = date.today().isoformat()
@@ -373,6 +483,7 @@ def set_user_frame(user_id, frame):
     conn.commit()
     conn.close()
 
+# ===================== دوال السوق =====================
 def create_listing(seller_id, item_type, item_id, price_type, price):
     conn = get_conn()
     conn.execute("INSERT INTO market_listings (seller_id, item_type, item_id, price_type, price) VALUES (?,?,?,?,?)",
@@ -420,7 +531,7 @@ def buy_listing(listing_id, buyer_id):
     conn.close()
     return True
 
-# --- Clan Treasury ---
+# ===================== دوال خزينة العشيرة =====================
 def get_clan_treasury(clan_name):
     conn = get_conn()
     row = conn.execute("SELECT * FROM clan_treasury WHERE clan_name=?", (clan_name,)).fetchone()
@@ -463,7 +574,7 @@ def upgrade_clan(clan_name, upgrade_id, conn=None):
     conn.execute("UPDATE clan_treasury SET upgrades = ? WHERE clan_name=?", (json.dumps(upgrades), clan_name))
     return True
 
-# --- Clan Wars ---
+# ===================== دوال حرب العشائر (الموسم) =====================
 def get_active_war_season():
     conn = get_conn()
     row = conn.execute("SELECT * FROM clan_war_season WHERE active=1 ORDER BY season_id DESC LIMIT 1").fetchone()
@@ -473,7 +584,7 @@ def get_active_war_season():
 def start_new_war_season():
     conn = get_conn()
     now = datetime.now().isoformat()
-    end = (datetime.now() + date.timedelta(days=config.WAR_SEASON_DURATION_DAYS)).isoformat()
+    end = (datetime.now() + timedelta(days=config.WAR_SEASON_DURATION_DAYS)).isoformat()
     conn.execute("INSERT INTO clan_war_season (start_date, end_date, active) VALUES (?,?,1)", (now, end))
     conn.commit()
     conn.close()
@@ -491,7 +602,7 @@ def update_clan_war_score(clan_name, points, existing_conn=None):
         conn.commit()
         conn.close()
 
-# --- Spectator Mode ---
+# ===================== دوال غرف المشاهدة =====================
 def create_spectator_room(room_id, player1, player2, chat_id):
     conn = get_conn()
     conn.execute("INSERT INTO spectator_rooms (room_id, player1, player2, chat_id, status) VALUES (?,?,?,?,'waiting')",
@@ -513,7 +624,7 @@ def update_spectator_room(room_id, **kwargs):
     conn.commit()
     conn.close()
 
-# --- Seasons ---
+# ===================== دوال المواسم =====================
 def get_active_season():
     conn = get_conn()
     row = conn.execute("SELECT * FROM season_info WHERE active=1 ORDER BY season_id DESC LIMIT 1").fetchone()
@@ -526,7 +637,7 @@ def reset_season_rankings():
     conn.commit()
     conn.close()
 
-# --- World Boss ---
+# ===================== دوال الزعيم العالمي =====================
 def get_world_boss():
     conn = get_conn()
     row = conn.execute("SELECT * FROM world_boss WHERE status='active'").fetchone()
@@ -563,39 +674,7 @@ def get_top_boss_damagers():
     conn.close()
     return [dict(r) for r in rows]
 
-# --- قدرات ---
-def get_ability_count(user_id, ability):
-    conn = get_conn()
-    row = conn.execute(f"SELECT {ability} FROM user_abilities WHERE user_id=?", (user_id,)).fetchone()
-    if not row:
-        conn.execute("INSERT OR IGNORE INTO user_abilities (user_id) VALUES (?)", (user_id,))
-        conn.commit()
-        row = conn.execute(f"SELECT {ability} FROM user_abilities WHERE user_id=?", (user_id,)).fetchone()
-    conn.close()
-    return row[0] if row else 0
-
-def use_ability(user_id, ability):
-    conn = get_conn()
-    count = conn.execute(f"SELECT {ability} FROM user_abilities WHERE user_id=?", (user_id,)).fetchone()
-    if not count or count[0] <= 0: return False
-    conn.execute(f"UPDATE user_abilities SET {ability} = {ability} - 1 WHERE user_id=?", (user_id,))
-    conn.commit()
-    conn.close()
-    return True
-
-def buy_ability(user_id, ability):
-    cost = config.ABILITIES[ability]["cost"]
-    conn = get_conn()
-    u = conn.execute("SELECT points FROM users WHERE user_id=?", (user_id,)).fetchone()
-    if not u or u["points"] < cost: return False
-    conn.execute("UPDATE users SET points = points - ? WHERE user_id=?", (cost, user_id))
-    conn.execute("INSERT OR IGNORE INTO user_abilities (user_id) VALUES (?)", (user_id,))
-    conn.execute(f"UPDATE user_abilities SET {ability} = {ability} + 1 WHERE user_id=?", (user_id,))
-    conn.commit()
-    conn.close()
-    return True
-
-# --- Mass Battle ---
+# ===================== دوال المعارك الجماعية =====================
 def start_mass_battle(chat_id):
     conn = get_conn()
     cur = conn.execute("INSERT INTO mass_battle (chat_id, start_time) VALUES (?, datetime('now'))", (chat_id,))
@@ -625,7 +704,7 @@ def get_mass_battle_results(battle_id):
     conn.close()
     return winners
 
-# --- Team Battles ---
+# ===================== دوال معارك الفرق =====================
 def create_team_battle(chat_id, team1_name, team2_name):
     conn = get_conn()
     cur = conn.execute("INSERT INTO team_battles (chat_id, team1_name, team2_name) VALUES (?,?,?)",
@@ -648,7 +727,7 @@ def get_team_players(battle_id, team):
     conn.close()
     return [r["user_id"] for r in rows]
 
-# --- دوال التصنيف ---
+# ===================== دوال التصنيف والقنوات =====================
 def get_channel_leaderboard(chat_id, limit=10):
     conn = get_conn()
     rows = conn.execute("""
