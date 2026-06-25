@@ -1,8 +1,69 @@
-import sqlite3, json, asyncio
+import sqlite3
+import json
+import asyncio
 from datetime import datetime
 
 DB = "rps_bot.db"
 
+# ---------- متغيرات الحالة العامة ----------
+# إعدادات القنوات النشطة (chat_id -> {interval, ttl, task, message_id})
+channel_settings = {}
+channel_settings_lock = asyncio.Lock()
+
+# أقفال التصويت لكل قناة
+vote_locks = {}
+vote_lock_creation = asyncio.Lock()
+
+# منع التصويت المتكرر (cooldown)
+vote_cooldowns = {}
+vote_cooldown_seconds = 2
+vote_cooldown_lock = asyncio.Lock()
+
+# تحديات المشاهدة (Spectator)
+spectate_challenges = {}
+spectate_lock = asyncio.Lock()
+
+# جلسات المجموعات
+group_game_sessions = {}
+group_session_lock = asyncio.Lock()
+
+# التحديات المفتوحة
+open_challenges = {}
+open_challenge_lock = asyncio.Lock()
+
+# الألعاب الفردية في المجموعات
+group_solo_games = {}
+
+# حركات معركة الفرق
+team_battle_moves = {}
+
+# مهام الزعيم العالمي والموسم
+boss_spawn_task = None
+boss_spawn_lock = asyncio.Lock()
+season_check_task = None
+season_lock = asyncio.Lock()
+
+# ---------- دوال الأقفال ----------
+async def get_vote_lock(chat_id):
+    """إرجاع قفل خاص بالقناة وإنشاؤه إذا لزم الأمر"""
+    async with vote_lock_creation:
+        if chat_id not in vote_locks:
+            vote_locks[chat_id] = asyncio.Lock()
+        return vote_locks[chat_id]
+
+async def is_spam_vote(chat_id, user_id) -> bool:
+    """تعيد True إذا كان التصويت مكرراً قبل مرور فترة التبريد"""
+    async with vote_cooldown_lock:
+        if chat_id not in vote_cooldowns:
+            vote_cooldowns[chat_id] = {}
+        now = asyncio.get_event_loop().time()
+        last = vote_cooldowns[chat_id].get(user_id, 0)
+        if now - last < vote_cooldown_seconds:
+            return True
+        vote_cooldowns[chat_id][user_id] = now
+        return False
+
+# ---------- دوال إدارة قائمة الانتظار (Random Matchmaking) ----------
 pending_lock = asyncio.Lock()
 active_lock = asyncio.Lock()
 
@@ -19,8 +80,10 @@ async def add_pending(user_id):
             opp_id = other[0]
             conn.execute("DELETE FROM pending_matches WHERE user_id=?", (opp_id,))
             game_id = f"random_{user_id}_{opp_id}_{int(datetime.now().timestamp())}"
-            conn.execute("INSERT INTO active_games (game_id, player1, player2, type, status, data) VALUES (?,?,?,?,?,?)",
-                        (game_id, user_id, opp_id, "random", "waiting", json.dumps({})))
+            conn.execute(
+                "INSERT INTO active_games (game_id, player1, player2, type, status, data) VALUES (?,?,?,?,?,?)",
+                (game_id, user_id, opp_id, "random", "waiting", json.dumps({}))
+            )
             conn.commit()
             conn.close()
             return opp_id
@@ -40,8 +103,10 @@ async def remove_game(game_id):
 def start_solo_game(user_id):
     game_id = f"solo_{user_id}_{int(datetime.now().timestamp())}"
     conn = sqlite3.connect(DB)
-    conn.execute("INSERT INTO active_games (game_id, player1, type, status, data) VALUES (?,?,?,?,?)",
-                (game_id, user_id, "solo", "active", json.dumps({})))
+    conn.execute(
+        "INSERT INTO active_games (game_id, player1, type, status, data) VALUES (?,?,?,?,?)",
+        (game_id, user_id, "solo", "active", json.dumps({}))
+    )
     conn.commit()
     conn.close()
     return game_id
@@ -62,15 +127,19 @@ def get_game(game_id):
 def get_game_by_player(user_id):
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
-    game = conn.execute("SELECT * FROM active_games WHERE (player1=? OR player2=?) AND status='waiting'",
-                        (user_id, user_id)).fetchone()
+    game = conn.execute(
+        "SELECT * FROM active_games WHERE (player1=? OR player2=?) AND status='waiting'",
+        (user_id, user_id)
+    ).fetchone()
     conn.close()
     return dict(game) if game else None
 
 def set_game_move(game_id, player_id, move):
     conn = sqlite3.connect(DB)
     game = conn.execute("SELECT data FROM active_games WHERE game_id=?", (game_id,)).fetchone()
-    if not game: return False
+    if not game:
+        conn.close()
+        return False
     data = json.loads(game[0])
     data[str(player_id)] = move
     conn.execute("UPDATE active_games SET data=? WHERE game_id=?", (json.dumps(data), game_id))
@@ -82,39 +151,6 @@ def get_game_moves(game_id):
     conn = sqlite3.connect(DB)
     game = conn.execute("SELECT data FROM active_games WHERE game_id=?", (game_id,)).fetchone()
     conn.close()
-    if not game: return {}
+    if not game:
+        return {}
     return json.loads(game[0])
-
-# --- متغيرات الميزات الأخرى ---
-spectate_challenges = {}
-spectate_lock = asyncio.Lock()
-
-group_game_sessions = {}
-group_session_lock = asyncio.Lock()
-
-open_challenges = {}
-open_challenge_lock = asyncio.Lock()
-
-group_solo_games = {}
-
-channel_settings = {}
-channel_settings_lock = asyncio.Lock()
-
-team_battle_moves = {}
-
-boss_spawn_task = None
-boss_spawn_lock = asyncio.Lock()
-
-season_check_task = None
-season_lock = asyncio.Lock()
-
-# أقفال التصويت لكل قناة
-vote_locks = {}
-vote_lock_creation = asyncio.Lock()
-
-async def get_vote_lock(chat_id):
-    """إرجاع قفل خاص بالقناة وإنشاؤه إذا لزم الأمر"""
-    async with vote_lock_creation:
-        if chat_id not in vote_locks:
-            vote_locks[chat_id] = asyncio.Lock()
-        return vote_locks[chat_id]
