@@ -4,6 +4,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import db, config, keyboards
 import state as channel_state
+import db as users_engine          # ✅ استخدم db بدل engine.users
 from engine.game_engine import GameEngine
 import utils
 
@@ -157,8 +158,9 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 for uid, pred in predictions.items():
                     if pred == win_move:
                         prediction_winners.append(int(uid))
-                        user_data = db.get_user(int(uid))   # ✅ تغيير
-                        db.update_user(int(uid), points=user_data["points"] + config.PREDICTION_BONUS)   # ✅ تغيير
+                        u = users_engine.get_user(int(uid))
+                        if u:
+                            users_engine.update_user(int(uid), points=u["points"] + config.PREDICTION_BONUS)
 
             if result and result["players"]:
                 counts = result["counts"]
@@ -175,12 +177,12 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                     if current_event == "double_points":
                         base_reward *= 2
                     bonus = 5 if move == bot_move else 0
-                    user_data = db.get_user(uid_int)   # ✅ تغيير
+                    u = users_engine.get_user(uid_int)
                     players_rewards.append({
                         "user_id": uid_int,
                         "is_winner": is_winner,
                         "reward": base_reward + bonus,
-                        "clan": user_data.get("clan") if user_data else None
+                        "clan": u.get("clan") if u else None
                     })
 
                 engine.process_rewards(chat_id, players_rewards)
@@ -195,7 +197,7 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                             mvp_user_id = p["user_id"]
                 mvp_name = ""
                 if mvp_user_id:
-                    mvp_user = db.get_user(mvp_user_id)   # ✅ تغيير
+                    mvp_user = users_engine.get_user(mvp_user_id)
                     mvp_name = mvp_user["first_name"] if mvp_user else "غير معروف"
 
                 clan_scores = {}
@@ -221,7 +223,7 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 if current_event == "random_winner":
                     text += "\n🎲 تم اختيار فائز عشوائي!"
                 if prediction_winners:
-                    names = ", ".join([db.get_user(uid)["first_name"] for uid in prediction_winners[:5]])   # ✅ تغيير
+                    names = ", ".join([users_engine.get_user(uid)["first_name"] for uid in prediction_winners[:5]])
                     text += f"\n🔮 توقع صحيح: {names} (+{config.PREDICTION_BONUS})"
                 if clan_scores:
                     sorted_clans = sorted(clan_scores.items(), key=lambda x: x[1], reverse=True)[:3]
