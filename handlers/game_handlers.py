@@ -72,9 +72,9 @@ async def process_random_pick(update, context, move, game_id):
         theme2 = utils.get_choices_for_user(p2)
         icon1 = theme1.get(m1, m1)
         icon2 = theme2.get(m2, m2)
-        p1_name = db.get_user(p1)["first_name"]      # ✅ تغيير
-        p2_name = db.get_user(p2)["first_name"]      # ✅ تغيير
-        text = f"⚔️ {p1_name} اختار {icon1} vs {p2_name} اختار {icon2}\nالنتيجة: {res1} لصالح {p1_name}"
+        user1 = db.get_user(p1)
+        user2 = db.get_user(p2)
+        text = f"⚔️ {user1['first_name']} اختار {icon1} vs {user2['first_name']} اختار {icon2}\nالنتيجة: {res1} لصالح {user1['first_name']}"
         await query.edit_message_text(text)
         try:
             await context.bot.send_message(p2, text)
@@ -202,8 +202,8 @@ async def process_open_acceptor_pick(update, context, move, chat_id):
         db.apply_game_result(initiator_id, result_init, initiator_move, user.id)
         result_acceptor = "loss" if result_init == "win" else ("win" if result_init == "loss" else "draw")
         db.apply_game_result(user.id, result_acceptor, move, initiator_id)
-        u1 = db.get_user(initiator_id)      # ✅ تغيير
-        u2 = db.get_user(user.id)           # ✅ تغيير
+        u1 = db.get_user(initiator_id)
+        u2 = db.get_user(user.id)
         theme1 = utils.get_choices_for_user(initiator_id)
         theme2 = utils.get_choices_for_user(user.id)
         icon1 = theme1.get(initiator_move, initiator_move)
@@ -259,8 +259,8 @@ async def process_tournament_pick(update, context, move, tour_id, match_index):
         elif current_round == 3:
             final_winner = match["winner"]
             if final_winner:
-                user_data = db.get_user(final_winner)   # ✅ تغيير
-                db.update_user(final_winner, tournament_wins=user_data.get("tournament_wins",0)+1, points=user_data["points"]+200)   # ✅ تغيير
+                user_data = db.get_user(final_winner)
+                db.update_user(final_winner, tournament_wins=user_data.get("tournament_wins",0)+1, points=user_data["points"]+200)
                 await context.bot.send_message(final_winner, "🎉 أنت بطل البطولة! ربحت 200 نقطة.")
             db.update_tournament(tour_id, status="finished")
     await query.edit_message_text("تم تسجيل حركتك.")
@@ -287,8 +287,8 @@ async def process_spectate_pick(update, context, move, room_id):
         db.apply_game_result(p1, res1, m1, p2)
         res2 = "loss" if res1 == "win" else ("win" if res1 == "loss" else "draw")
         db.apply_game_result(p2, res2, m2, p1)
-        u1 = db.get_user(p1)      # ✅ تغيير
-        u2 = db.get_user(p2)      # ✅ تغيير
+        u1 = db.get_user(p1)
+        u2 = db.get_user(p2)
         theme1 = utils.get_choices_for_user(p1)
         theme2 = utils.get_choices_for_user(p2)
         icon1 = theme1.get(m1, m1)
