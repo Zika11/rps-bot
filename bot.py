@@ -1,15 +1,30 @@
-import json, logging, asyncio, random, sqlite3
+import json
+import logging
+import asyncio
+import random
+import sqlite3
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-import models, db, config, state, keyboards, game_logic, utils
+
+import models
+import db
+import config
+import state
+import keyboards
+import game_logic
+import utils
 import engine.game_engine as game_engine
 import state as channel_state
+
+# Handlers
 import handlers.channel_handlers as channel_h
 import handlers.game_handlers as game_h
 import handlers.shop_handlers as shop_h
 import handlers.social_handlers as social_h
 import handlers.misc_handlers as misc_h
+
+# Callbacks (منظمة حسب النوع)
 from handlers.callbacks import (
     navigation_handler,
     game_handler,
@@ -18,6 +33,8 @@ from handlers.callbacks import (
     social_handler,
     admin_handler
 )
+
+# Commands (منظمة حسب النوع)
 from handlers.commands import (
     start, me_command, daily_command, referral_command,
     game_command, web_command,
@@ -30,49 +47,29 @@ from handlers.commands.admin_commands import (
     admin_channels_list, admin_reset_games
 )
 
+# المهام الخلفية
+from tasks import run_cleanup, run_auto_drops
+
+# ==================== الإعدادات الأساسية ====================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 models.init_db()
 
-# ---------- المهام الدورية ----------
-async def cleanup_stuck_games():
-    while True:
-        await asyncio.sleep(60)
-        try:
-            conn = sqlite3.connect(config.DB_NAME)
-            cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
-            conn.execute("DELETE FROM active_games WHERE created_at < ?", (cutoff,))
-            conn.execute("DELETE FROM pending_matches")
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.error(f"خطأ في تنظيف الألعاب: {e}")
-
-async def auto_drops(app):
-    while True:
-        await asyncio.sleep(600)
-        if random.random() < config.DROP_CHANCE:
-            for chat_id in list(channel_state.channel_settings.keys()):
-                reward = random.choice(config.DROP_REWARDS)
-                keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎁 افتح الصندوق!", callback_data=f"claim_drop_{reward[0]}_{reward[1]}")]])
-                try:
-                    await app.bot.send_message(chat_id, "💥 صندوق مفاجئ! أول واحد يضغط يربح:", reply_markup=keyboard)
-                except:
-                    pass
-
-# ---------- معالج النصوص ----------
+# ==================== معالج الرسائل النصية ====================
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الرسائل النصية (للأوامر النصية غير المعرفة، البث، إدخال البيانات)"""
     user = update.effective_user
     msg = update.message.text.strip() if update.message.text else ""
     chat_type = update.effective_chat.type
     bot_username = context.bot.username.lower()
     entities = update.message.entities or update.message.caption_entities
 
+    # التعامل مع المنشن في المجموعات
     if entities and chat_type in ["group", "supergroup"]:
         for ent in entities:
             if ent.type == MessageEntity.MENTION:
-                mention = msg[ent.offset:ent.offset+ent.length]
+                mention = msg[ent.offset:ent.offset + ent.length]
                 if mention.lower() == f"@{bot_username}":
                     await handle_group_mention(update, context, update.effective_chat.id)
                     return
@@ -81,7 +78,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await handle_group_mention(update, context, update.effective_chat.id)
                     return
 
+    # في الخاص فقط
     if chat_type == "private":
+        # حالة انتظار البث
         if context.user_data.get("awaiting_broadcast"):
             broadcast_msg = update.message.text
             success, fail = 0, 0
@@ -95,6 +94,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["awaiting_broadcast"] = False
             return
 
+        # حالة انتظار تعديل النقاط (إدارة)
         if context.user_data.get("awaiting_set_points"):
             try:
                 parts = update.message.text.split()
@@ -108,18 +108,22 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["awaiting_set_points"] = False
             return
 
+        # حالة انتظار بدء قناة (إدارة)
         if context.user_data.get("awaiting_start_channel"):
             await channel_h.process_start_channel_text(update, context)
             return
 
+        # حالة انتظار إيقاف قناة (إدارة)
         if context.user_data.get("awaiting_stop_channel"):
             await channel_h.process_stop_channel_text(update, context)
             return
 
+        # منع النصوص الطويلة
         if len(msg) > 100:
             await update.message.reply_text("النص طويل جداً.")
             return
 
+        # حالات انتظار إدخال بيانات من المستخدم
         if context.user_data.get("awaiting_friend_username"):
             await social_h.process_friend_username(update, context)
         elif context.user_data.get("awaiting_clan_name"):
@@ -136,15 +140,22 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["awaiting_friend_challenge"] = False
 
 async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """معالج منشن البوت في المجموعة"""
     async with state.group_session_lock:
-        if chat_id in state.group_game_sessions: return
-    await context.bot.send_message(chat_id, "مرحباً بك في RPS Arena!", reply_markup=keyboards.channel_main_menu(chat_id))
+        if chat_id in state.group_game_sessions:
+            return
+    await context.bot.send_message(
+        chat_id,
+        "مرحباً بك في RPS Arena!",
+        reply_markup=keyboards.channel_main_menu(chat_id)
+    )
 
-# ---------- تشغيل البوت ----------
+# ==================== تشغيل البوت ====================
 def main():
+    """النقطة الرئيسية لتشغيل البوت"""
     app = Application.builder().token(config.BOT_TOKEN).build()
 
-    # --- الأوامر ---
+    # -------------------- الأوامر --------------------
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("me", me_command))
     app.add_handler(CommandHandler("daily", daily_command))
@@ -165,24 +176,44 @@ def main():
     app.add_handler(CommandHandler("web", web_command))
     app.add_handler(CommandHandler("game", game_command))
 
-    # --- معالجات الأزرار (مقسمة) ---
+    # -------------------- معالجات الأزرار (مقسمة حسب البادئة) --------------------
+    # حركات القناة (move_*)
     app.add_handler(CallbackQueryHandler(channel_h.handle_move, pattern="^move_"))
+    # الملاحة الأساسية
     app.add_handler(CallbackQueryHandler(navigation_handler, pattern="^(back_main|delete_message|language|profile)$"))
-    app.add_handler(CallbackQueryHandler(game_handler, pattern="^(game|solo|random|friend|channel|spock|story|group_|pick_|spockpick_|open_|join_tournament_|accept_challenge_|reject_challenge_|spectate_)"))
-    app.add_handler(CallbackQueryHandler(channel_handler, pattern="^(channel_play|weekly_leaderboard|ch_leaderboard_|predict_|tasks|achievements|rating|battlepass|wheel)"))
-    app.add_handler(CallbackQueryHandler(shop_handler, pattern="^(shop|shop_cards|buy_|shop_titles|buy_title_|shop_themes|buy_theme_|frames_shop|buy_frame_|abilities_shop|buy_ability_|market|treasure_box)"))
-    app.add_handler(CallbackQueryHandler(social_handler, pattern="^(friends|add_friend|friend_requests|friend_list|accept_friend_|reject_friend_|clans|clan_|treasury_|do_upgrade_|clan_war_info)"))
+    # أزرار اللعب
+    app.add_handler(CallbackQueryHandler(
+        game_handler,
+        pattern="^(game|solo|random|friend|channel|spock|story|group_|pick_|spockpick_|open_|join_tournament_|accept_challenge_|reject_challenge_|spectate_)"
+    ))
+    # أزرار القناة والمهام والإنجازات والتصنيف والعجلة
+    app.add_handler(CallbackQueryHandler(
+        channel_handler,
+        pattern="^(channel_play|weekly_leaderboard|ch_leaderboard_|predict_|tasks|achievements|rating|battlepass|wheel)"
+    ))
+    # أزرار المتجر
+    app.add_handler(CallbackQueryHandler(
+        shop_handler,
+        pattern="^(shop|shop_cards|buy_|shop_titles|buy_title_|shop_themes|buy_theme_|frames_shop|buy_frame_|abilities_shop|buy_ability_|market|treasure_box)"
+    ))
+    # أزرار الأصدقاء والعشائر
+    app.add_handler(CallbackQueryHandler(
+        social_handler,
+        pattern="^(friends|add_friend|friend_requests|friend_list|accept_friend_|reject_friend_|clans|clan_|treasury_|do_upgrade_|clan_war_info)"
+    ))
+    # أزرار الإدارة (للمؤسس فقط)
     app.add_handler(CallbackQueryHandler(admin_handler, pattern="^admin_"))
 
-    # --- معالج النصوص ---
+    # -------------------- معالج النصوص --------------------
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # --- المهام الخلفية ---
+    # -------------------- المهام الخلفية --------------------
     loop = asyncio.get_event_loop()
-    loop.create_task(cleanup_stuck_games())
-    loop.create_task(auto_drops(app))
+    loop.create_task(run_cleanup())        # تنظيف الألعاب العالقة
+    loop.create_task(run_auto_drops(app))  # إسقاط الصناديق التلقائية
 
-    logger.info("البوت يعمل...")
+    # -------------------- بدء البوت --------------------
+    logger.info("🚀 البوت يعمل...")
     app.run_polling()
 
 if __name__ == "__main__":
