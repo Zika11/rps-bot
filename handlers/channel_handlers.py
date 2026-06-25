@@ -4,11 +4,10 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import db, config, keyboards
 import state as channel_state
-import db as users_engine          # ✅ استخدم db بدل engine.users
-from engine.game_engine import GameEngine
 import utils
 
 logger = logging.getLogger(__name__)
+from engine.game_engine import GameEngine
 engine = GameEngine()
 
 # ---------- معالج الأزرار الجديد للقناة ----------
@@ -58,6 +57,7 @@ async def weekly_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ---------- حلقة التصويت التلقائي للقناة ----------
 async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
     last_message_id = None
+    stats_task = None
 
     while channel_state.channel_settings.get(chat_id):
         try:
@@ -134,17 +134,25 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                     except Exception as e:
                         logger.error(f"خطأ في تحديث الإحصائيات: {e}")
                         await asyncio.sleep(3)
-            asyncio.create_task(update_live_stats())
+            
+            if stats_task:
+                stats_task.cancel()
+            stats_task = asyncio.create_task(update_live_stats())
 
             remaining = (end_dt - datetime.now()).total_seconds()
             if remaining > 0:
                 try: await asyncio.sleep(remaining)
                 except asyncio.CancelledError:
+                    if stats_task:
+                        stats_task.cancel()
                     try: await context.bot.delete_message(chat_id, invite_message_id)
                     except: pass
                     try: await context.bot.delete_message(chat_id, pred_message_id)
                     except: pass
                     raise
+
+            if stats_task:
+                stats_task.cancel()
 
             result = await engine.finish_round(chat_id, event=current_event)
 
@@ -158,9 +166,9 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 for uid, pred in predictions.items():
                     if pred == win_move:
                         prediction_winners.append(int(uid))
-                        u = users_engine.get_user(int(uid))
-                        if u:
-                            users_engine.update_user(int(uid), points=u["points"] + config.PREDICTION_BONUS)
+                        user_data = db.get_user(int(uid))
+                        if user_data:
+                            db.update_user(int(uid), points=user_data["points"] + config.PREDICTION_BONUS)
 
             if result and result["players"]:
                 counts = result["counts"]
@@ -177,12 +185,12 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                     if current_event == "double_points":
                         base_reward *= 2
                     bonus = 5 if move == bot_move else 0
-                    u = users_engine.get_user(uid_int)
+                    user_data = db.get_user(uid_int)
                     players_rewards.append({
                         "user_id": uid_int,
                         "is_winner": is_winner,
                         "reward": base_reward + bonus,
-                        "clan": u.get("clan") if u else None
+                        "clan": user_data.get("clan") if user_data else None
                     })
 
                 engine.process_rewards(chat_id, players_rewards)
@@ -197,7 +205,7 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                             mvp_user_id = p["user_id"]
                 mvp_name = ""
                 if mvp_user_id:
-                    mvp_user = users_engine.get_user(mvp_user_id)
+                    mvp_user = db.get_user(mvp_user_id)
                     mvp_name = mvp_user["first_name"] if mvp_user else "غير معروف"
 
                 clan_scores = {}
@@ -223,7 +231,7 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
                 if current_event == "random_winner":
                     text += "\n🎲 تم اختيار فائز عشوائي!"
                 if prediction_winners:
-                    names = ", ".join([users_engine.get_user(uid)["first_name"] for uid in prediction_winners[:5]])
+                    names = ", ".join([db.get_user(uid)["first_name"] for uid in prediction_winners[:5] if db.get_user(uid)])
                     text += f"\n🔮 توقع صحيح: {names} (+{config.PREDICTION_BONUS})"
                 if clan_scores:
                     sorted_clans = sorted(clan_scores.items(), key=lambda x: x[1], reverse=True)[:3]
@@ -246,6 +254,8 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
 
         except asyncio.CancelledError:
             logger.info(f"تم إلغاء حلقة القناة {chat_id}")
+            if stats_task:
+                stats_task.cancel()
             break
         except Exception as e:
             logger.error(f"خطأ غير متوقع في حلقة القناة {chat_id}: {e}")
@@ -255,15 +265,13 @@ async def channel_voting_loop(chat_id, context: ContextTypes.DEFAULT_TYPE):
         if chat_id in channel_state.channel_settings:
             del channel_state.channel_settings[chat_id]
 
-# ---------- 🆕 معالجات أزرار بدء/إيقاف القناة (للمؤسس) ----------
+# ---------- معالجات أزرار بدء/إيقاف القناة (للمؤسس) ----------
 async def admin_start_channel_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """يطلب من المؤسس إرسال اسم القناة لبدء اللعبة"""
     query = update.callback_query
     await query.edit_message_text("أرسل معرف القناة (مثل @channelname) مع الإعدادات:\n`@channelname interval=60 ttl=30`")
     context.user_data["awaiting_start_channel"] = True
 
 async def process_start_channel_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """يعالج النص المُرسل لبدء قناة"""
     user = update.effective_user
     if not utils.is_founder(user.id):
         await update.message.reply_text("غير مسموح")
@@ -297,13 +305,11 @@ async def process_start_channel_text(update: Update, context: ContextTypes.DEFAU
     context.user_data["awaiting_start_channel"] = False
 
 async def admin_stop_channel_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """يطلب من المؤسس إرسال اسم القناة لإيقاف اللعبة"""
     query = update.callback_query
     await query.edit_message_text("أرسل معرف القناة (مثل @channelname) لإيقاف اللعبة:")
     context.user_data["awaiting_stop_channel"] = True
 
 async def process_stop_channel_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """يعالج النص المُرسل لإيقاف قناة"""
     user = update.effective_user
     if not utils.is_founder(user.id):
         await update.message.reply_text("غير مسموح")
