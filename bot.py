@@ -5,8 +5,8 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 import models, db, config, state, keyboards, game_logic, utils
 import engine.game_engine as game_engine
 import state as channel_state
-# ❌ حذف import engine.users as users_engine
-# ❌ حذف import engine.economy as economy
+import db as users_engine          # ✅ استخدم db بدل engine.users
+import db as economy               # ✅ استخدم db بدل engine.economy
 import handlers.channel_handlers as channel_h
 import handlers.game_handlers as game_h
 import handlers.shop_handlers as shop_h
@@ -48,17 +48,17 @@ async def auto_drops(app):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
-        u = db.get_user(user.id)          # ✅ تغيير
+        u = users_engine.get_user(user.id)
         if not u:
-            db.create_user(user.id, user.username, user.first_name)   # ✅ تغيير
+            users_engine.create_user(user.id, user.username, user.first_name)
             args = context.args
             if args and args[0].startswith("ref"):
                 try:
                     ref_id = int(args[0][3:])
                     if ref_id != user.id:
-                        ref_user = db.get_user(ref_id)                # ✅ تغيير
+                        ref_user = users_engine.get_user(ref_id)
                         if ref_user:
-                            db.update_user(ref_id,                    # ✅ تغيير
+                            users_engine.update_user(ref_id,
                                            referrals=int(ref_user.get("referrals",0)) + 1,
                                            points=int(ref_user.get("points",0)) + config.REFERRAL_REWARD)
                             await context.bot.send_message(ref_id, f"🎉 {user.first_name} انضم عبر رابط الإحالة الخاص بك! ربحت {config.REFERRAL_REWARD} نقطة.")
@@ -76,7 +76,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 streak = 1
             days = (date.today() - date.fromisoformat(u["registered_date"][:10])).days if u.get("registered_date") else 0
-            db.update_user(user.id, last_login=datetime.now().isoformat(), login_streak=streak, days_since_register=days)   # ✅ تغيير
+            users_engine.update_user(user.id, last_login=datetime.now().isoformat(), login_streak=streak, days_since_register=days)
             await game_logic.check_achievements(user.id, context)
         text = f"أهلاً {user.first_name}! اختر من القائمة:"
         await update.message.reply_text(text, reply_markup=keyboards.main_menu())
@@ -86,7 +86,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    u = db.get_user(user.id)           # ✅ تغيير
+    u = users_engine.get_user(user.id)
     if not u:
         await update.message.reply_text("سجّل دخولك أولاً باستخدام /start")
         return
@@ -140,7 +140,7 @@ async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     bot_username = context.bot.username
     ref_link = f"https://t.me/{bot_username}?start=ref{user.id}"
-    u = db.get_user(user.id)           # ✅ تغيير
+    u = users_engine.get_user(user.id)
     refs = u.get("referrals", 0) if u else 0
     text = f"🔗 **رابط الإحالة الخاص بك:**\n{ref_link}\n\nعدد المدعوين: {refs}\nكل من ينضم عبر هذا الرابط يكسبك {config.REFERRAL_REWARD} نقطة."
     await update.message.reply_text(text)
@@ -148,31 +148,31 @@ async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def wheel_spin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
-    u = db.get_user(user.id)          # ✅ تغيير
+    u = users_engine.get_user(user.id)
     if u["gems"] < config.WHEEL_COST:
         await query.answer("تحتاج 5 جواهر لتدوير العجلة!")
         return
-    db.update_user(user.id, gems=u["gems"] - config.WHEEL_COST)   # ✅ تغيير
+    users_engine.update_user(user.id, gems=u["gems"] - config.WHEEL_COST)
     reward_type, value = db.spin_wheel(user.id)
     if reward_type == "points":
-        db.update_user(user.id, points=u["points"] + value)        # ✅ تغيير
+        users_engine.update_user(user.id, points=u["points"] + value)
         msg = f"🎉 ربحت {value} نقطة!"
     elif reward_type == "gems":
-        db.update_user(user.id, gems=u["gems"] + value)            # ✅ تغيير
+        users_engine.update_user(user.id, gems=u["gems"] + value)
         msg = f"🎉 ربحت {value} جوهرة!"
     elif reward_type == "title":
-        db.update_user(user.id, title=value)                      # ✅ تغيير
+        users_engine.update_user(user.id, title=value)
         msg = f"🎉 حصلت على لقب '{value}'!"
     elif reward_type == "theme":
-        db.update_user(user.id, theme=value)                      # ✅ تغيير
+        users_engine.update_user(user.id, theme=value)
         msg = f"🎉 حصلت على ثيم جديد!"
     elif reward_type == "treasure_box":
         sub = random.choice(config.TREASURE_REWARDS)
         if sub[0] == "points":
-            db.update_user(user.id, points=u["points"] + sub[1])   # ✅ تغيير
+            users_engine.update_user(user.id, points=u["points"] + sub[1])
             msg = f"🎁 صندوق كنز: +{sub[1]} نقطة"
         elif sub[0] == "gems":
-            db.update_user(user.id, gems=u["gems"] + sub[1])       # ✅ تغيير
+            users_engine.update_user(user.id, gems=u["gems"] + sub[1])
             msg = f"🎁 صندوق كنز: +{sub[1]} جوهرة"
         else:
             msg = "🎁 صندوق كنز!"
@@ -212,7 +212,7 @@ async def market_sell_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("العملة يجب أن تكون points أو gems")
         return
     owned = False
-    u = db.get_user(user.id)          # ✅ تغيير
+    u = users_engine.get_user(user.id)
     if item_type == "theme" and u.get("theme") == item_id:
         owned = True
     elif item_type == "title" and u.get("title") == item_id:
@@ -260,7 +260,7 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     item_type = args[0].lower()
     item_id = args[1]
-    success, msg = db.buy_item(user.id, item_type, item_id)   # ✅ تغيير
+    success, msg = db.buy_item(user.id, item_type, item_id)   # ✅ استخدم db.buy_item
     await update.message.reply_text(msg)
 
 # ---------- أمر الويب ----------
@@ -296,7 +296,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await social_h.clans_menu_handler(update, context)
     elif data == "tasks":
         tasks = db.get_tasks()
-        u = db.get_user(user.id)          # ✅ تغيير
+        u = users_engine.get_user(user.id)
         progress_data = u.get("tasks_progress")
         progress = {}
         if progress_data:
@@ -310,7 +310,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=keyboards.back_button())
     elif data == "achievements":
         all_ach = db.get_achievements()
-        u = db.get_user(user.id)          # ✅ تغيير
+        u = users_engine.get_user(user.id)
         earned = [a for a in (u.get("achievements") or "").split(",") if a]
         text = "🏅 الإنجازات:\n"
         for a in all_ach:
@@ -327,9 +327,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"{i}. {name} - {rating_val} ({tier_icon} {tier_name})\n"
         await query.edit_message_text(text, reply_markup=keyboards.back_button())
     elif data == "language":
-        u = db.get_user(user.id)          # ✅ تغيير
+        u = users_engine.get_user(user.id)
         new_lang = "en" if u["language"] == "ar" else "ar"
-        db.update_user(user.id, language=new_lang)   # ✅ تغيير
+        users_engine.update_user(user.id, language=new_lang)
         await query.edit_message_text("تم تغيير اللغة", reply_markup=keyboards.main_menu(new_lang))
 
     # أوضاع اللعب
@@ -583,7 +583,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    total_users = len(db.get_all_user_ids())   # ✅ تغيير
+    total_users = len(users_engine.get_all_user_ids())
     conn = sqlite3.connect(config.DB_NAME)
     total_games = conn.execute("SELECT COUNT(*) FROM active_games").fetchone()[0]
     total_clans = conn.execute("SELECT COUNT(*) FROM clans").fetchone()[0]
@@ -643,7 +643,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if context.user_data.get("awaiting_broadcast"):
             broadcast_msg = update.message.text
             success, fail = 0, 0
-            for uid in db.get_all_user_ids():   # ✅ تغيير
+            for uid in users_engine.get_all_user_ids():
                 try:
                     await context.bot.send_message(uid, broadcast_msg)
                     success += 1
@@ -659,7 +659,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 uid = int(parts[0])
                 pts = int(parts[1])
                 gems = int(parts[2])
-                db.update_user(uid, points=pts, gems=gems)   # ✅ تغيير
+                users_engine.update_user(uid, points=pts, gems=gems)
                 await update.message.reply_text("تم التحديث")
             except:
                 await update.message.reply_text("صيغة خاطئة")
@@ -686,7 +686,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await social_h.process_join_clan(update, context)
         elif context.user_data.get("awaiting_friend_challenge"):
             username = msg.lstrip("@")
-            target = db.get_user_by_username(username)   # ✅ تغيير
+            target = users_engine.get_user_by_username(username)
             if not target:
                 await update.message.reply_text("المستخدم غير موجود.")
             else:
@@ -757,10 +757,10 @@ async def massbattle_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     winners = db.get_mass_battle_results(battle_id)
     if winners:
         for uid in winners:
-            user_data = db.get_user(uid)   # ✅ تغيير
-            db.update_user(uid, points=user_data["points"] + config.MASS_BATTLE_REWARD[0],
-                           gems=user_data.get("gems",0) + config.MASS_BATTLE_REWARD[1])   # ✅ تغيير
-        winner_names = ", ".join([db.get_user(uid)["first_name"] for uid in winners[:5]])   # ✅ تغيير
+            u = users_engine.get_user(uid)
+            users_engine.update_user(uid, points=u["points"] + config.MASS_BATTLE_REWARD[0],
+                           gems=u.get("gems",0) + config.MASS_BATTLE_REWARD[1])
+        winner_names = ", ".join([users_engine.get_user(uid)["first_name"] for uid in winners[:5]])
         await context.bot.send_message(chat_id, f"🎉 انتهت المعركة! الفائزون: {winner_names} (+{config.MASS_BATTLE_REWARD[0]} نقطة، +{config.MASS_BATTLE_REWARD[1]} جوهرة)")
     else:
         await context.bot.send_message(chat_id, "لم ينضم أحد للمعركة!")
