@@ -5,12 +5,14 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 import models, db, config, state, keyboards, game_logic, utils
 import engine.game_engine as game_engine
 import state as channel_state
-# ✅ استخدم db بدلاً من engine.users و engine.economy
 import handlers.channel_handlers as channel_h
 import handlers.game_handlers as game_h
 import handlers.shop_handlers as shop_h
 import handlers.social_handlers as social_h
 import handlers.misc_handlers as misc_h
+
+# استيراد معالجات الأزرار الجديدة
+from handlers.callbacks import navigation, game, channel, shop, social, admin
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -47,7 +49,6 @@ async def auto_drops(app):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
-        # ✅ استخدم db بدلاً من users_engine
         u = db.get_user(user.id)
         if not u:
             db.create_user(user.id, user.username, user.first_name)
@@ -260,7 +261,6 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     item_type = args[0].lower()
     item_id = args[1]
-    # ✅ استخدم db بدلاً من economy
     success, msg = db.buy_item(user.id, item_type, item_id)
     await update.message.reply_text(msg)
 
@@ -275,313 +275,13 @@ async def web_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def game_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("اضغط للعب:", reply_markup=keyboards.mini_app_button())
 
-# ---------- معالج الأزرار الرئيسي (مُنسّق) ----------
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = query.from_user
-    data = query.data
-    await query.answer()
-
-    # الملاحة الأساسية
-    if data == "back_main":
-        await query.edit_message_text("القائمة الرئيسية:", reply_markup=keyboards.main_menu())
-    elif data == "delete_message":
-        await query.delete_message()
-    elif data == "game":
-        await query.edit_message_text("اختر نمط اللعب:", reply_markup=keyboards.game_mode_menu())
-    elif data == "friends":
-        await social_h.friends_menu_handler(update, context)
-    elif data == "shop":
-        await shop_h.shop_main(update, context)
-    elif data == "clans":
-        await social_h.clans_menu_handler(update, context)
-    elif data == "tasks":
-        tasks = db.get_tasks()
-        u = db.get_user(user.id)
-        progress_data = u.get("tasks_progress")
-        progress = {}
-        if progress_data:
-            try: progress = json.loads(progress_data)
-            except: pass
-        tasks_progress = progress.get("tasks", {})
-        text = "📋 المهام:\n"
-        for t in tasks:
-            done = tasks_progress.get(f"{t['task_id']}_done", False)
-            text += f"{'✅' if done else '⭕'} {t['description']} (+{t['points_reward']} نقطة)\n"
-        await query.edit_message_text(text, reply_markup=keyboards.back_button())
-    elif data == "achievements":
-        all_ach = db.get_achievements()
-        u = db.get_user(user.id)
-        earned = [a for a in (u.get("achievements") or "").split(",") if a]
-        text = "🏅 الإنجازات:\n"
-        for a in all_ach:
-            icon = a["icon"] if a["ach_id"] in earned else "🔒"
-            text += f"{icon} {a['name']} - {a['description']}\n"
-        await query.edit_message_text(text, reply_markup=keyboards.back_button())
-    elif data == "rating":
-        top = db.get_top_ratings(10)
-        text = "📊 أفضل 10 لاعبين:\n"
-        for i, r in enumerate(top, 1):
-            name = r["first_name"] or str(r["user_id"])
-            rating_val = r["rating"]
-            tier_name, tier_icon = config.get_tier_info(rating_val)
-            text += f"{i}. {name} - {rating_val} ({tier_icon} {tier_name})\n"
-        await query.edit_message_text(text, reply_markup=keyboards.back_button())
-    elif data == "language":
-        u = db.get_user(user.id)
-        new_lang = "en" if u["language"] == "ar" else "ar"
-        db.update_user(user.id, language=new_lang)
-        await query.edit_message_text("تم تغيير اللغة", reply_markup=keyboards.main_menu(new_lang))
-
-    # أوضاع اللعب
-    elif data == "solo":
-        await game_h.solo_start(update, context)
-    elif data == "random":
-        await game_h.random_matchmaking(update, context)
-    elif data == "friend":
-        await game_h.friend_challenge_prompt(update, context)
-    elif data == "channel":
-        await query.edit_message_text("تحدي القنوات: أرسل هذه الرسالة في قناة/مجموعة واطلب من شخص الرد بـ /accept")
-        context.user_data["channel_challenge_active"] = True
-    elif data == "spock":
-        from config import SPOCK_CHOICES
-        buttons = [InlineKeyboardButton(icon, callback_data=f"spockpick_{key}") for key, icon in SPOCK_CHOICES.items()]
-        await query.edit_message_text("اختر حركتك (Spock):", reply_markup=InlineKeyboardMarkup([buttons]))
-    elif data == "story":
-        await query.edit_message_text("وضع القصة قيد التطوير...", reply_markup=keyboards.back_button())
-
-    # ألعاب المجموعة
-    elif data.startswith("group_solo_"):
-        chat_id = int(data.split("_")[-1])
-        game_id = state.start_solo_game(user.id)
-        state.group_solo_games[user.id] = {"chat_id": chat_id, "game_id": game_id}
-        keyboard = keyboards.group_choice_buttons(chat_id, user.id, game_id)
-        sent = await context.bot.send_message(chat_id, f"🎮 {user.first_name} يلعب ضد البوت. اختر حركتك:", reply_markup=keyboard)
-        state.group_solo_games[user.id]["message_id"] = sent.message_id
-        await query.answer("ظهرت أزرار الاختيار في المجموعة.")
-    elif data.startswith("group_random_join_"):
-        chat_id = int(data.split("_")[-1])
-        async with state.group_session_lock:
-            session = state.group_game_sessions.get(chat_id)
-            if not session:
-                await query.answer("انتهت الجلسة الحالية. انتظر الجولة القادمة.")
-                return
-            if user.id in session["players"]:
-                await query.answer("أنت مشترك بالفعل!")
-                return
-            session["players"].add(user.id)
-            await query.answer("تم تسجيلك في اللعبة العشوائية! 🎲")
-    elif data.startswith("group_friend_"):
-        await query.answer("استخدم /challenge في المجموعة.")
-    elif data.startswith("group_open_"):
-        chat_id = int(data.split("_")[-1])
-        await game_h.start_open_challenge(update, context, chat_id)
-    elif data.startswith("accept_open_"):
-        chat_id = int(data.split("_")[-1])
-        await game_h.accept_open_challenge(update, context, chat_id)
-    elif data.startswith("spectate_"):
-        chat_id = int(data.split("_")[-1])
-        await misc_h.spectate_room_create(update, context)
-
-    # اختيار الحركات
-    elif data.startswith("pick_"):
-        parts = data.split("_", 2)
-        if len(parts) < 3: return
-        game_type = parts[1]
-        tail = parts[2]
-        try:
-            game_id, move = tail.rsplit("_", 1)
-        except ValueError:
-            return
-        if move not in ["rock", "paper", "scissors"]:
-            await query.answer("حركة غير صالحة!")
-            return
-        if game_type == "solo":
-            await game_h.process_solo_pick(update, context, move, game_id)
-        elif game_type == "random":
-            await game_h.process_random_pick(update, context, move, game_id)
-        elif game_type == "tournament":
-            try:
-                tour_id = game_id
-                match_index, move = tail.rsplit("_", 1)
-                match_index = int(match_index)
-            except:
-                return
-            await game_h.process_tournament_pick(update, context, move, tour_id, match_index)
-        elif game_type == "spectate":
-            await game_h.process_spectate_pick(update, context, move, game_id)
-        elif game_type == "mass":
-            chat_id = int(game_id)
-            db.add_mass_pick(chat_id, user.id, move)
-            await query.edit_message_text("تم تسجيل حركتك في المعركة الجماعية!")
-    elif data.startswith("group_pick_"):
-        parts = data.split("_")
-        move = parts[2]
-        chat_id = int(parts[3])
-        player_id = int(parts[4])
-        game_id = parts[5]
-        if move not in ["rock", "paper", "scissors"]:
-            await query.answer("حركة غير صالحة!")
-            return
-        await game_h.process_group_solo_pick(update, context, move, chat_id, player_id, game_id)
-    elif data.startswith("spockpick_"):
-        move = data.split("_", 1)[1]
-        await game_h.process_spock_move(update, context, move)
-    elif data.startswith("open_pick_"):
-        parts = data.split("_")
-        move = parts[2]
-        chat_id = int(parts[3])
-        await game_h.process_open_pick(update, context, move, chat_id)
-    elif data.startswith("open_accept_"):
-        parts = data.split("_")
-        move = parts[2]
-        chat_id = int(parts[3])
-        await game_h.process_open_acceptor_pick(update, context, move, chat_id)
-
-    # الميزات الجديدة
-    elif data == "wheel":
-        await query.edit_message_text("🎡 عجلة الحظ! تدوير بـ 5 جواهر.", reply_markup=keyboards.wheel_button())
-    elif data == "wheel_spin":
-        await wheel_spin_handler(update, context)
-    elif data == "battlepass":
-        await battlepass_command(update, context)
-    elif data == "battlepass_progress":
-        await battlepass_command(update, context)
-
-    # المتجر والاقتصاد
-    elif data == "frames_shop":
-        await shop_h.frames_shop(update, context)
-    elif data.startswith("buy_frame_"):
-        await shop_h.buy_frame(update, context)
-    elif data == "market":
-        await shop_h.market_menu(update, context)
-    elif data == "market_browse":
-        await shop_h.market_browse(update, context)
-    elif data.startswith("market_buy_"):
-        await shop_h.market_buy(update, context)
-    elif data == "market_sell":
-        await shop_h.market_sell_prompt(update, context)
-    elif data == "abilities_shop":
-        await shop_h.abilities_shop(update, context)
-    elif data.startswith("buy_ability_"):
-        await shop_h.buy_ability(update, context)
-    elif data == "shop_cards":
-        await shop_h.shop_cards(update, context)
-    elif data.startswith("buy_") and "title" not in data and "theme" not in data and "frame" not in data and "ability" not in data:
-        await shop_h.buy_item(update, context)
-    elif data == "shop_titles":
-        await shop_h.shop_titles(update, context)
-    elif data.startswith("buy_title_"):
-        await shop_h.buy_title(update, context)
-    elif data == "shop_themes":
-        await shop_h.shop_themes(update, context)
-    elif data.startswith("buy_theme_"):
-        await shop_h.buy_theme(update, context)
-    elif data == "treasure_box":
-        await shop_h.treasure_box(update, context)
-
-    # العشائر
-    elif data == "clan_create":
-        await social_h.clan_create(update, context)
-    elif data == "clan_join":
-        await social_h.clan_join(update, context)
-    elif data == "clan_ranking":
-        await social_h.clan_ranking(update, context)
-    elif data == "clan_treasury":
-        await social_h.clan_treasury_menu(update, context)
-    elif data.startswith("treasury_view_"):
-        await social_h.treasury_view(update, context)
-    elif data.startswith("treasury_donate_points_"):
-        await social_h.treasury_donate_points(update, context)
-    elif data.startswith("treasury_donate_gems_"):
-        await social_h.treasury_donate_gems(update, context)
-    elif data.startswith("treasury_upgrade_"):
-        await social_h.treasury_upgrade(update, context)
-    elif data.startswith("do_upgrade_"):
-        await social_h.do_upgrade(update, context)
-    elif data == "clan_war_info":
-        await social_h.clan_war_info(update, context)
-
-    # الأصدقاء
-    elif data == "add_friend":
-        await social_h.add_friend_start(update, context)
-    elif data == "friend_requests":
-        await social_h.friend_requests_list(update, context)
-    elif data == "friend_list":
-        await social_h.friend_list_display(update, context)
-    elif data.startswith("accept_friend_") or data.startswith("reject_friend_"):
-        await social_h.handle_friend_action(update, context)
-
-    # القناة والأزرار التفاعلية
-    elif data.startswith("channel_play_"):
-        await channel_h.channel_play(update, context)
-    elif data.startswith("weekly_leaderboard_"):
-        await channel_h.weekly_leaderboard(update, context)
-    elif data == "profile":
-        await me_command(update, context)
-    elif data.startswith("ch_leaderboard_"):
-        chat_id = int(data.split("_")[-1])
-        top = db.get_channel_leaderboard(chat_id, 10)
-        text = "🏆 **أفضل 10 لاعبين في القناة:**\n"
-        for i, r in enumerate(top, 1):
-            text += f"{i}. {r['first_name']} - {r['points']} نقطة\n"
-        await query.edit_message_text(text)
-
-    # التوقعات
-    elif data.startswith("predict_"):
-        parts = data.split("_")
-        chat_id = int(parts[1])
-        predicted_move = parts[2]
-        if predicted_move not in ["rock", "paper", "scissors"]:
-            await query.answer("حركة غير صالحة!")
-            return
-        if await channel_state.is_spam_vote(chat_id, user.id):
-            await query.answer("تم استلام توقعك بالفعل!")
-            return
-        success = await game_engine.predict(chat_id, user.id, predicted_move)
-        if success:
-            await query.answer("تم تسجيل توقعك! 🔮")
-        else:
-            await query.answer("التوقع غير متاح الآن.")
-
-    # Admin, World Boss, Tournament, Spectator
-    elif data == "admin":
-        await admin_panel(update, context)
-    elif data == "admin_stats":
-        await admin_stats(update, context)
-    elif data == "admin_broadcast":
-        await admin_broadcast_prompt(update, context)
-    elif data == "admin_set_points":
-        await admin_set_points_prompt(update, context)
-    elif data == "admin_channels":
-        await admin_channels_list(update, context)
-    elif data == "admin_reset":
-        await admin_reset_games(update, context)
-    elif data == "admin_start_channel":
-        await channel_h.admin_start_channel_prompt(update, context)
-    elif data == "admin_stop_channel":
-        await channel_h.admin_stop_channel_prompt(update, context)
-    elif data == "boss_attack":
-        await misc_h.boss_attack(update, context)
-    elif data == "boss_status":
-        await misc_h.boss_command(update, context)
-    elif data == "tournament":
-        await misc_h.tournament_menu(update, context)
-    elif data.startswith("join_tournament_"):
-        await misc_h.join_tournament_handler(update, context)
-    elif data.startswith("accept_challenge_"):
-        await misc_h.accept_challenge(update, context)
-    elif data.startswith("reject_challenge_"):
-        await misc_h.reject_challenge(update, context)
-    elif data.startswith("spectate_join_"):
-        await misc_h.spectate_join(update, context)
-
-# ---------- Admin Panel ----------
+# ---------- Admin Panel (للأوامر) ----------
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not utils.is_founder(update.effective_user.id):
         return
     await update.message.reply_text("🛡️ **لوحة التحكم**", reply_markup=keyboards.admin_menu())
 
+# دوال الإدارة (مستوردة من bot.py القديم لكن نتركها هنا للاستخدام المباشر)
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     total_users = len(db.get_all_user_ids())
@@ -808,6 +508,8 @@ async def teambattle_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ---------- تشغيل البوت ----------
 def main():
     app = Application.builder().token(config.BOT_TOKEN).build()
+    
+    # الأوامر
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("me", me_command))
     app.add_handler(CommandHandler("daily", daily_command))
@@ -827,10 +529,20 @@ def main():
     app.add_handler(CommandHandler("teambattle", teambattle_command))
     app.add_handler(CommandHandler("web", web_command))
     app.add_handler(CommandHandler("game", game_command))
+    
+    # معالجات الأزرار - كل بادئة تذهب لملفها الخاص
     app.add_handler(CallbackQueryHandler(channel_h.handle_move, pattern="^move_"))
-    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(CallbackQueryHandler(navigation.handle, pattern="^(back_main|delete_message|language|profile|tasks|achievements|rating)"))
+    app.add_handler(CallbackQueryHandler(game.handle, pattern="^(game|solo|random|friend|channel|spock|story|pick_|group_pick_|spockpick_|open_pick_|open_accept_|group_solo_|group_random_join_|group_friend_|group_open_|accept_open_|spectate_)"))
+    app.add_handler(CallbackQueryHandler(channel.handle, pattern="^(channel_play_|weekly_leaderboard_|ch_leaderboard_|predict_)"))
+    app.add_handler(CallbackQueryHandler(shop.handle, pattern="^(shop|frames_shop|buy_frame_|market|market_browse|market_buy_|market_sell|abilities_shop|buy_ability_|shop_cards|buy_|shop_titles|buy_title_|shop_themes|buy_theme_|treasure_box|wheel|wheel_spin|battlepass|battlepass_progress)"))
+    app.add_handler(CallbackQueryHandler(social.handle, pattern="^(friends|add_friend|friend_requests|friend_list|accept_friend_|reject_friend_|clans|clan_create|clan_join|clan_ranking|clan_treasury|treasury_view_|treasury_donate_points_|treasury_donate_gems_|treasury_upgrade_|do_upgrade_|clan_war_info)"))
+    app.add_handler(CallbackQueryHandler(admin.handle, pattern="^(admin|admin_stats|admin_broadcast|admin_set_points|admin_channels|admin_reset|admin_start_channel|admin_stop_channel|boss_attack|boss_status|tournament|join_tournament_|accept_challenge_|reject_challenge_|spectate_join_)"))
+    
+    # معالج النصوص
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
+    # المهام الخلفية
     loop = asyncio.get_event_loop()
     loop.create_task(cleanup_stuck_games())
     loop.create_task(auto_drops(app))
