@@ -3,7 +3,14 @@ from telegram import Update
 from telegram.ext import ContextTypes
 import keyboards, utils
 import handlers.channel_handlers as channel_h
-from bot import admin_stats, admin_broadcast_prompt, admin_set_points_prompt, admin_channels_list, admin_reset_games
+# ✅ استيراد دوال الإدارة من ملف الأوامر بدلاً من bot.py
+from handlers.commands.admin_commands import (
+    admin_stats, 
+    admin_broadcast_prompt, 
+    admin_set_points_prompt, 
+    admin_channels_list, 
+    admin_reset_games
+)
 
 logger = logging.getLogger(__name__)
 
