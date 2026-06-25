@@ -3,8 +3,11 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# 🔥 الاستيراد الصح (لأن الملف جوه handlers)
+# ✅ الاستيراد الصح حسب مشروعك
 from handlers.game_handlers import handle_move, handle_mode_selection
+
+# keyboards (انت كنت مستخدمها قبل كده)
+from keyboards import main_menu_keyboard
 
 # Logging
 logging.basicConfig(
@@ -12,33 +15,48 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# التوكن من Railway Variables
 TOKEN = os.getenv("BOT_TOKEN")
 
-# Start command
+# ✅ start فيها UI زي ما انت عامل
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔥 Welcome to RPS Bot!\nChoose a mode 👇")
+    user = update.effective_user
 
-# Main function
+    await update.message.reply_text(
+        f"أهلاً يا {user.first_name} 👋\nاختار عايز تلعب إيه:",
+        reply_markup=main_menu_keyboard()
+    )
+
+# ✅ handler موحد (زي القديم بتاعك)
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+
+    if data in ["mode_pvp", "mode_bot"]:
+        await handle_mode_selection(query, context)
+
+    elif data in ["rock", "paper", "scissors"]:
+        await handle_move(query, context)
+
+    elif data == "back_main":
+        await query.edit_message_text(
+            "رجعنا للقائمة الرئيسية 👇",
+            reply_markup=main_menu_keyboard()
+        )
+
 def main():
     print("🚀 بدء تشغيل API...")
     print("🤖 بدء تشغيل البوت...")
 
     if not TOKEN:
-        raise ValueError("❌ BOT_TOKEN مش متضاف في Railway")
+        raise ValueError("❌ BOT_TOKEN مش متضاف")
 
     app = Application.builder().token(TOKEN).build()
 
-    # Commands
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
 
-    # Buttons (Modes)
-    app.add_handler(CallbackQueryHandler(handle_mode_selection, pattern="^mode_"))
-
-    # Buttons (Moves)
-    app.add_handler(CallbackQueryHandler(handle_move, pattern="^(rock|paper|scissors)$"))
-
-    # تشغيل البوت
     app.run_polling()
 
 if __name__ == "__main__":
