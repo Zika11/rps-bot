@@ -2,8 +2,6 @@ import json, random, logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import db, config, keyboards
-import engine.users as users_engine
-import engine.economy as economy
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +25,15 @@ async def buy_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     item_id = query.data.split("_", 1)[1]
-    u = users_engine.get_user(user.id)
+    u = db.get_user(user.id)   # ✅ تغيير
     item = next((i for i in db.get_shop_items() if i["item_id"] == item_id), None)
     if not item or u["points"] < item["price"]:
         await query.answer("نقاط غير كافية")
         return
-    users_engine.update_user(user.id, points=u["points"] - item["price"])
+    db.update_user(user.id, points=u["points"] - item["price"])   # ✅ تغيير
     owned = (u.get("shop_items") or "").split(",")
     owned.append(item_id)
-    users_engine.update_user(user.id, shop_items=",".join([o for o in owned if o]))
+    db.update_user(user.id, shop_items=",".join([o for o in owned if o]))   # ✅ تغيير
     await query.answer("تم الشراء!")
 
 async def shop_titles(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -55,7 +53,7 @@ async def buy_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     title_id = query.data.split("_", 2)[2]
-    success, msg = economy.buy_item(user.id, "title", title_id)
+    success, msg = db.buy_item(user.id, "title", title_id)   # ✅ تغيير
     if success:
         await query.answer(msg)
     else:
@@ -78,7 +76,7 @@ async def buy_theme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     theme_id = query.data.split("_", 2)[2]
-    success, msg = economy.buy_item(user.id, "theme", theme_id)
+    success, msg = db.buy_item(user.id, "theme", theme_id)   # ✅ تغيير
     if success:
         await query.answer(msg)
     else:
@@ -87,24 +85,24 @@ async def buy_theme(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def treasure_box(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
-    u = users_engine.get_user(user.id)
+    u = db.get_user(user.id)   # ✅ تغيير
     if u["points"] < config.TREASURE_BOX_PRICE:
         await query.answer("تحتاج 100 نقطة")
         return
-    users_engine.update_user(user.id, points=u["points"] - config.TREASURE_BOX_PRICE)
+    db.update_user(user.id, points=u["points"] - config.TREASURE_BOX_PRICE)   # ✅ تغيير
     reward = random.choice(config.TREASURE_REWARDS)
     typ, val = reward[0], reward[1]
     if typ == "points":
-        users_engine.update_user(user.id, points=u["points"] + val)
+        db.update_user(user.id, points=u["points"] + val)   # ✅ تغيير
     elif typ == "gems":
-        users_engine.update_user(user.id, gems=int(u.get("gems",0)) + val)
+        db.update_user(user.id, gems=int(u.get("gems",0)) + val)   # ✅ تغيير
     elif typ == "title":
-        users_engine.update_user(user.id, title=val)
+        db.update_user(user.id, title=val)   # ✅ تغيير
     elif typ == "theme":
-        users_engine.update_user(user.id, theme=val)
+        db.update_user(user.id, theme=val)   # ✅ تغيير
     elif typ == "booster":
         owned = u.get("shop_items","") + f",{val}" if u.get("shop_items") else val
-        users_engine.update_user(user.id, shop_items=owned)
+        db.update_user(user.id, shop_items=owned)   # ✅ تغيير
     await query.answer(f"حصلت على {val}!")
 
 async def frames_shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -115,7 +113,7 @@ async def buy_frame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     frame = query.data.split("_")[-1]
-    success, msg = economy.buy_item(user.id, "frame", frame)
+    success, msg = db.buy_item(user.id, "frame", frame)   # ✅ تغيير
     if success:
         await query.answer("تم شراء الإطار! استخدم /me لرؤيته.")
     else:
@@ -135,7 +133,7 @@ async def market_browse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "📊 **عروض السوق:**\n"
     buttons = []
     for l in listings[:5]:
-        seller = users_engine.get_user(l["seller_id"])
+        seller = db.get_user(l["seller_id"])   # ✅ تغيير
         name = seller["first_name"] if seller else "مجهول"
         text += f"{l['listing_id']}. {l['item_type']} {l['item_id']} - {l['price']} {l['price_type']} (من {name})\n"
         buttons.append([InlineKeyboardButton(f"شراء {l['listing_id']}", callback_data=f"market_buy_{l['listing_id']}")])
@@ -164,7 +162,7 @@ async def buy_ability(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     ability = query.data.split("_")[-1]
-    success, msg = economy.buy_item(user.id, "ability", ability)
+    success, msg = db.buy_item(user.id, "ability", ability)   # ✅ تغيير
     if success:
         await query.answer(f"تم شراء {config.ABILITIES[ability]['name']}!")
     else:
