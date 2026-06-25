@@ -56,7 +56,8 @@ async def boss_attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     damage = random.randint(10, 40)
     db.add_boss_damage(user.id, damage)
-    db.update_user(user.id, points=db.get_user(user.id)["points"] + 5)
+    user_data = db.get_user(user.id)
+    db.update_user(user.id, points=user_data["points"] + 5)
     boss = db.get_world_boss()
     if boss["status"] == "defeated":
         top_damagers = db.get_top_boss_damagers()
