@@ -2,7 +2,7 @@ import json, logging, sqlite3
 from datetime import datetime
 import engine.voting as voting
 import engine.rewards as rewards
-import engine.state as state
+import state          # ✅ تغيير هنا
 import config
 
 logger = logging.getLogger(__name__)
