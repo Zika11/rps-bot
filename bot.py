@@ -5,8 +5,8 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 import models, db, config, state, keyboards, game_logic, utils
 import engine.game_engine as game_engine
 import state as channel_state
-import db as users_engine          # ✅ استخدم db بدل engine.users
-import db as economy               # ✅ استخدم db بدل engine.economy
+import engine.users as users_engine
+import engine.economy as economy
 import handlers.channel_handlers as channel_h
 import handlers.game_handlers as game_h
 import handlers.shop_handlers as shop_h
@@ -260,7 +260,7 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     item_type = args[0].lower()
     item_id = args[1]
-    success, msg = db.buy_item(user.id, item_type, item_id)   # ✅ استخدم db.buy_item
+    success, msg = economy.buy_item(user.id, item_type, item_id)
     await update.message.reply_text(msg)
 
 # ---------- أمر الويب ----------
@@ -757,9 +757,8 @@ async def massbattle_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     winners = db.get_mass_battle_results(battle_id)
     if winners:
         for uid in winners:
-            u = users_engine.get_user(uid)
-            users_engine.update_user(uid, points=u["points"] + config.MASS_BATTLE_REWARD[0],
-                           gems=u.get("gems",0) + config.MASS_BATTLE_REWARD[1])
+            users_engine.update_user(uid, points=users_engine.get_user(uid)["points"] + config.MASS_BATTLE_REWARD[0],
+                           gems=users_engine.get_user(uid).get("gems",0) + config.MASS_BATTLE_REWARD[1])
         winner_names = ", ".join([users_engine.get_user(uid)["first_name"] for uid in winners[:5]])
         await context.bot.send_message(chat_id, f"🎉 انتهت المعركة! الفائزون: {winner_names} (+{config.MASS_BATTLE_REWARD[0]} نقطة، +{config.MASS_BATTLE_REWARD[1]} جوهرة)")
     else:
