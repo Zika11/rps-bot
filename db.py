@@ -1,5 +1,8 @@
-import sqlite3, json, logging, random
-from datetime import datetime, date, timedelta  # ✅ تأكد إن timedelta مستوردة كده
+import sqlite3
+import json
+import logging
+import random
+from datetime import datetime, date, timedelta
 import config
 
 DB = config.DB_NAME
@@ -26,8 +29,10 @@ def create_user(user_id, username, first_name, language='ar'):
     conn = get_conn()
     now = datetime.now().isoformat()
     try:
-        conn.execute("INSERT INTO users (user_id, username, first_name, language, registered_date, last_login) VALUES (?,?,?,?,?,?)",
-                     (user_id, username, first_name, language, now, now))
+        conn.execute(
+            "INSERT INTO users (user_id, username, first_name, language, registered_date, last_login) VALUES (?,?,?,?,?,?)",
+            (user_id, username, first_name, language, now, now)
+        )
         conn.execute("INSERT OR IGNORE INTO ratings (user_id) VALUES (?)", (user_id,))
         conn.commit()
     except sqlite3.IntegrityError:
@@ -36,7 +41,8 @@ def create_user(user_id, username, first_name, language='ar'):
         conn.close()
 
 def update_user(user_id, **kwargs):
-    if not kwargs: return
+    if not kwargs:
+        return
     conn = get_conn()
     fields = ', '.join(f"{k}=?" for k in kwargs)
     values = list(kwargs.values())
@@ -61,8 +67,10 @@ def get_clan(clan_name):
 def create_clan(name, leader_id):
     conn = get_conn()
     try:
-        conn.execute("INSERT INTO clans (name, leader_id, created_at) VALUES (?,?,?)",
-                     (name, leader_id, datetime.now().isoformat()))
+        conn.execute(
+            "INSERT INTO clans (name, leader_id, created_at) VALUES (?,?,?)",
+            (name, leader_id, datetime.now().isoformat())
+        )
         conn.commit()
         return True
     except sqlite3.IntegrityError:
@@ -122,7 +130,10 @@ def get_top_ratings(limit=10):
 def send_friend_request(sender, receiver):
     conn = get_conn()
     try:
-        conn.execute("INSERT OR IGNORE INTO friend_requests VALUES (?,?, 'pending')", (sender, receiver))
+        conn.execute(
+            "INSERT OR IGNORE INTO friend_requests VALUES (?,?, 'pending')",
+            (sender, receiver)
+        )
         conn.commit()
         return True
     except:
@@ -132,13 +143,19 @@ def send_friend_request(sender, receiver):
 
 def get_pending_requests(user_id):
     conn = get_conn()
-    rows = conn.execute("SELECT sender_id FROM friend_requests WHERE receiver_id=? AND status='pending'", (user_id,)).fetchall()
+    rows = conn.execute(
+        "SELECT sender_id FROM friend_requests WHERE receiver_id=? AND status='pending'",
+        (user_id,)
+    ).fetchall()
     conn.close()
     return [r[0] for r in rows]
 
 def accept_friend_request(sender, receiver):
     conn = get_conn()
-    conn.execute("UPDATE friend_requests SET status='accepted' WHERE sender_id=? AND receiver_id=?", (sender, receiver))
+    conn.execute(
+        "UPDATE friend_requests SET status='accepted' WHERE sender_id=? AND receiver_id=?",
+        (sender, receiver)
+    )
     conn.execute("INSERT OR IGNORE INTO friends VALUES (?,?)", (sender, receiver))
     conn.execute("INSERT OR IGNORE INTO friends VALUES (?,?)", (receiver, sender))
     conn.commit()
@@ -146,7 +163,10 @@ def accept_friend_request(sender, receiver):
 
 def reject_friend_request(sender, receiver):
     conn = get_conn()
-    conn.execute("DELETE FROM friend_requests WHERE sender_id=? AND receiver_id=?", (sender, receiver))
+    conn.execute(
+        "DELETE FROM friend_requests WHERE sender_id=? AND receiver_id=?",
+        (sender, receiver)
+    )
     conn.commit()
     conn.close()
 
@@ -159,7 +179,10 @@ def get_friends(user_id):
 # ========== البطولات ==========
 def create_tournament(name):
     conn = get_conn()
-    cur = conn.execute("INSERT INTO tournaments (name, status) VALUES (?, 'open')", (name,))
+    cur = conn.execute(
+        "INSERT INTO tournaments (name, status) VALUES (?, 'open')",
+        (name,)
+    )
     conn.commit()
     tour_id = cur.lastrowid
     conn.close()
@@ -168,12 +191,21 @@ def create_tournament(name):
 def join_tournament(tour_id, user_id):
     conn = get_conn()
     row = conn.execute("SELECT players FROM tournaments WHERE tour_id=?", (tour_id,)).fetchone()
-    if not row: return False
+    if not row:
+        conn.close()
+        return False
     players = json.loads(row[0] or "[]")
-    if len(players) >= 8: return False
-    if user_id in players: return True
+    if len(players) >= 8:
+        conn.close()
+        return False
+    if user_id in players:
+        conn.close()
+        return True
     players.append(user_id)
-    conn.execute("UPDATE tournaments SET players=? WHERE tour_id=?", (json.dumps(players), tour_id))
+    conn.execute(
+        "UPDATE tournaments SET players=? WHERE tour_id=?",
+        (json.dumps(players), tour_id)
+    )
     conn.commit()
     conn.close()
     return True
@@ -201,11 +233,18 @@ def get_achievements():
 def add_achievement(user_id, ach_id):
     conn = get_conn()
     u = conn.execute("SELECT achievements FROM users WHERE user_id=?", (user_id,)).fetchone()
-    if not u: return False
+    if not u:
+        conn.close()
+        return False
     achieved = u[0].split(",") if u[0] else []
-    if ach_id in achieved: return False
+    if ach_id in achieved:
+        conn.close()
+        return False
     achieved.append(ach_id)
-    conn.execute("UPDATE users SET achievements=? WHERE user_id=?", (",".join(achieved), user_id))
+    conn.execute(
+        "UPDATE users SET achievements=? WHERE user_id=?",
+        (",".join(achieved), user_id)
+    )
     conn.commit()
     conn.close()
     return True
@@ -218,8 +257,14 @@ def get_active_clan_war():
 
 def add_clan_war_points(clan, amount):
     conn = get_conn()
-    conn.execute("UPDATE clan_wars SET points1 = points1 + ? WHERE clan1=? AND active=1", (amount, clan))
-    conn.execute("UPDATE clan_wars SET points2 = points2 + ? WHERE clan2=? AND active=1", (amount, clan))
+    conn.execute(
+        "UPDATE clan_wars SET points1 = points1 + ? WHERE clan1=? AND active=1",
+        (amount, clan)
+    )
+    conn.execute(
+        "UPDATE clan_wars SET points2 = points2 + ? WHERE clan2=? AND active=1",
+        (amount, clan)
+    )
     conn.commit()
     conn.close()
 
@@ -273,9 +318,14 @@ def apply_game_result(user_id, result, move, opponent_id=None):
     conn.close()
     return {
         "user_id": user_id,
-        "wins": wins, "losses": losses, "draws": draws,
-        "points": points, "gems": gems, "win_streak": win_streak,
-        "rock_used": rock_used, "streak_count": streak_count,
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "points": points,
+        "gems": gems,
+        "win_streak": win_streak,
+        "rock_used": rock_used,
+        "streak_count": streak_count,
         "rating": new_rating
     }
 
@@ -303,14 +353,18 @@ def claim_daily(user_id):
         streak = 1
     if streak > 7:
         streak = 1
-    reward = config.DAILY_REWARDS.get(streak, (0,0))
+    reward = config.DAILY_REWARDS.get(streak, (0, 0))
     points, gems = reward
     u = conn.execute("SELECT points, gems FROM users WHERE user_id=?", (user_id,)).fetchone()
     if u:
-        conn.execute("UPDATE users SET points=?, gems=? WHERE user_id=?", 
-                     (u["points"] + points, u["gems"] + gems, user_id))
-    conn.execute("INSERT OR REPLACE INTO daily_claims (user_id, last_claimed_date, streak) VALUES (?,?,?)",
-                 (user_id, today, streak))
+        conn.execute(
+            "UPDATE users SET points=?, gems=? WHERE user_id=?",
+            (u["points"] + points, u["gems"] + gems, user_id)
+        )
+    conn.execute(
+        "INSERT OR REPLACE INTO daily_claims (user_id, last_claimed_date, streak) VALUES (?,?,?)",
+        (user_id, today, streak)
+    )
     add_battle_pass_xp(user_id, 10, conn)
     conn.commit()
     conn.close()
@@ -330,7 +384,10 @@ def add_battle_pass_xp(user_id, xp_amount, existing_conn=None):
     conn = existing_conn if existing_conn else get_conn()
     bp = conn.execute("SELECT * FROM battle_pass WHERE user_id=?", (user_id,)).fetchone()
     if not bp:
-        conn.execute("INSERT INTO battle_pass (user_id, xp, level) VALUES (?,?,?)", (user_id, xp_amount, 1))
+        conn.execute(
+            "INSERT INTO battle_pass (user_id, xp, level) VALUES (?,?,?)",
+            (user_id, xp_amount, 1)
+        )
         if not existing_conn:
             conn.commit()
             conn.close()
@@ -340,7 +397,10 @@ def add_battle_pass_xp(user_id, xp_amount, existing_conn=None):
     while new_level < config.MAX_BATTLE_PASS_LEVEL and new_xp >= new_level * config.BATTLE_PASS_XP_PER_LEVEL:
         new_xp -= new_level * config.BATTLE_PASS_XP_PER_LEVEL
         new_level += 1
-    conn.execute("UPDATE battle_pass SET xp=?, level=? WHERE user_id=?", (new_xp, new_level, user_id))
+    conn.execute(
+        "UPDATE battle_pass SET xp=?, level=? WHERE user_id=?",
+        (new_xp, new_level, user_id)
+    )
     if not existing_conn:
         conn.commit()
         conn.close()
@@ -363,20 +423,28 @@ def get_user_frame(user_id):
 
 def set_user_frame(user_id, frame):
     conn = get_conn()
-    conn.execute("INSERT OR IGNORE INTO user_frames (user_id, owned_frames, active_frame) VALUES (?, 'default', 'default')", (user_id,))
+    conn.execute(
+        "INSERT OR IGNORE INTO user_frames (user_id, owned_frames, active_frame) VALUES (?, 'default', 'default')",
+        (user_id,)
+    )
     current = conn.execute("SELECT owned_frames FROM user_frames WHERE user_id=?", (user_id,)).fetchone()
     if current:
         owned = current[0].split(",")
         if frame not in owned:
             owned.append(frame)
-        conn.execute("UPDATE user_frames SET owned_frames=?, active_frame=? WHERE user_id=?", (",".join(owned), frame, user_id))
+        conn.execute(
+            "UPDATE user_frames SET owned_frames=?, active_frame=? WHERE user_id=?",
+            (",".join(owned), frame, user_id)
+        )
     conn.commit()
     conn.close()
 
 def create_listing(seller_id, item_type, item_id, price_type, price):
     conn = get_conn()
-    conn.execute("INSERT INTO market_listings (seller_id, item_type, item_id, price_type, price) VALUES (?,?,?,?,?)",
-                 (seller_id, item_type, item_id, price_type, price))
+    conn.execute(
+        "INSERT INTO market_listings (seller_id, item_type, item_id, price_type, price) VALUES (?,?,?,?,?)",
+        (seller_id, item_type, item_id, price_type, price)
+    )
     conn.commit()
     conn.close()
 
@@ -388,14 +456,25 @@ def get_active_listings():
 
 def buy_listing(listing_id, buyer_id):
     conn = get_conn()
-    listing = conn.execute("SELECT * FROM market_listings WHERE listing_id=? AND status='active'", (listing_id,)).fetchone()
-    if not listing: return False
+    listing = conn.execute(
+        "SELECT * FROM market_listings WHERE listing_id=? AND status='active'",
+        (listing_id,)
+    ).fetchone()
+    if not listing:
+        conn.close()
+        return False
     seller_id = listing["seller_id"]
     buyer = conn.execute("SELECT points, gems FROM users WHERE user_id=?", (buyer_id,)).fetchone()
-    if not buyer: return False
+    if not buyer:
+        conn.close()
+        return False
     price = listing["price"]
-    if listing["price_type"] == "points" and buyer["points"] < price: return False
-    if listing["price_type"] == "gems" and buyer["gems"] < price: return False
+    if listing["price_type"] == "points" and buyer["points"] < price:
+        conn.close()
+        return False
+    if listing["price_type"] == "gems" and buyer["gems"] < price:
+        conn.close()
+        return False
     if listing["price_type"] == "points":
         conn.execute("UPDATE users SET points = points - ? WHERE user_id=?", (price, buyer_id))
         conn.execute("UPDATE users SET points = points + ? WHERE user_id=?", (price, seller_id))
@@ -451,18 +530,27 @@ def upgrade_clan(clan_name, upgrade_id, conn=None):
     if conn is None:
         conn = get_conn()
     treasury = conn.execute("SELECT * FROM clan_treasury WHERE clan_name=?", (clan_name,)).fetchone()
-    if not treasury: return False
+    if not treasury:
+        if conn != get_conn():
+            conn.close()
+        return False
     upgrades = json.loads(treasury["upgrades"] or "{}")
     current_level = int(upgrades.get(upgrade_id, 0))
     max_level = config.CLAN_UPGRADES[upgrade_id]["levels"]
-    if current_level >= max_level: return False
+    if current_level >= max_level:
+        if conn != get_conn():
+            conn.close()
+        return False
     cost = config.CLAN_UPGRADES[upgrade_id]["cost_per_level"] * (current_level + 1)
-    if treasury["points"] < cost: return False
+    if treasury["points"] < cost:
+        if conn != get_conn():
+            conn.close()
+        return False
     conn.execute("UPDATE clan_treasury SET points = points - ? WHERE clan_name=?", (cost, clan_name))
     upgrades[upgrade_id] = current_level + 1
     conn.execute("UPDATE clan_treasury SET upgrades = ? WHERE clan_name=?", (json.dumps(upgrades), clan_name))
     conn.commit()
-    if conn != get_conn():  # لو مش موجودة في get_conn
+    if conn != get_conn():
         conn.close()
     return True
 
@@ -476,20 +564,33 @@ def get_active_war_season():
 def start_new_war_season():
     conn = get_conn()
     now = datetime.now().isoformat()
-    end = (datetime.now() + timedelta(days=config.WAR_SEASON_DURATION_DAYS)).isoformat()  # ✅ تم الإصلاح
-    conn.execute("INSERT INTO clan_war_season (start_date, end_date, active) VALUES (?,?,1)", (now, end))
+    # ✅ تم الإصلاح: استخدام timedelta مباشرة
+    end = (datetime.now() + timedelta(days=config.WAR_SEASON_DURATION_DAYS)).isoformat()
+    conn.execute(
+        "INSERT INTO clan_war_season (start_date, end_date, active) VALUES (?,?,1)",
+        (now, end)
+    )
     conn.commit()
     conn.close()
 
 def update_clan_war_score(clan_name, points, existing_conn=None):
     conn = existing_conn if existing_conn else get_conn()
-    season = conn.execute("SELECT season_id FROM clan_war_season WHERE active=1 ORDER BY season_id DESC LIMIT 1").fetchone()
-    if not season: return
+    season = conn.execute(
+        "SELECT season_id FROM clan_war_season WHERE active=1 ORDER BY season_id DESC LIMIT 1"
+    ).fetchone()
+    if not season:
+        if not existing_conn:
+            conn.close()
+        return
     region = random.choice(config.WAR_REGIONS)
-    conn.execute("INSERT OR IGNORE INTO clan_war_scores (clan_name, season_id, region, score) VALUES (?,?,?,0)",
-                 (clan_name, season[0], region))
-    conn.execute("UPDATE clan_war_scores SET score = score + ? WHERE clan_name=? AND season_id=? AND region=?",
-                 (points, clan_name, season[0], region))
+    conn.execute(
+        "INSERT OR IGNORE INTO clan_war_scores (clan_name, season_id, region, score) VALUES (?,?,?,0)",
+        (clan_name, season[0], region)
+    )
+    conn.execute(
+        "UPDATE clan_war_scores SET score = score + ? WHERE clan_name=? AND season_id=? AND region=?",
+        (points, clan_name, season[0], region)
+    )
     if not existing_conn:
         conn.commit()
         conn.close()
@@ -497,8 +598,10 @@ def update_clan_war_score(clan_name, points, existing_conn=None):
 # ========== Spectator Mode ==========
 def create_spectator_room(room_id, player1, player2, chat_id):
     conn = get_conn()
-    conn.execute("INSERT INTO spectator_rooms (room_id, player1, player2, chat_id, status) VALUES (?,?,?,?,'waiting')",
-                 (room_id, player1, player2, chat_id))
+    conn.execute(
+        "INSERT INTO spectator_rooms (room_id, player1, player2, chat_id, status) VALUES (?,?,?,?,'waiting')",
+        (room_id, player1, player2, chat_id)
+    )
     conn.commit()
     conn.close()
 
@@ -534,8 +637,10 @@ def get_world_boss():
     conn = get_conn()
     row = conn.execute("SELECT * FROM world_boss WHERE status='active'").fetchone()
     if not row:
-        conn.execute("INSERT OR IGNORE INTO world_boss (boss_id, current_hp, max_hp, spawned_at) VALUES (1, ?, ?, ?)",
-                     (config.BOSS_HP, config.BOSS_HP, datetime.now().isoformat()))
+        conn.execute(
+            "INSERT OR IGNORE INTO world_boss (boss_id, current_hp, max_hp, spawned_at) VALUES (1, ?, ?, ?)",
+            (config.BOSS_HP, config.BOSS_HP, datetime.now().isoformat())
+        )
         conn.commit()
         row = conn.execute("SELECT * FROM world_boss WHERE boss_id=1").fetchone()
     conn.close()
@@ -544,11 +649,22 @@ def get_world_boss():
 def add_boss_damage(user_id, damage, existing_conn=None):
     conn = existing_conn if existing_conn else get_conn()
     boss = conn.execute("SELECT * FROM world_boss WHERE status='active'").fetchone()
-    if not boss: return
-    conn.execute("INSERT OR IGNORE INTO boss_damage (user_id, boss_id) VALUES (?,?)", (user_id, boss["boss_id"]))
-    conn.execute("UPDATE boss_damage SET damage = damage + ?, attacks = attacks + 1 WHERE user_id=? AND boss_id=?",
-                 (damage, user_id, boss["boss_id"]))
-    conn.execute("UPDATE world_boss SET current_hp = MAX(0, current_hp - ?) WHERE boss_id=?", (damage, boss["boss_id"]))
+    if not boss:
+        if not existing_conn:
+            conn.close()
+        return
+    conn.execute(
+        "INSERT OR IGNORE INTO boss_damage (user_id, boss_id) VALUES (?,?)",
+        (user_id, boss["boss_id"])
+    )
+    conn.execute(
+        "UPDATE boss_damage SET damage = damage + ?, attacks = attacks + 1 WHERE user_id=? AND boss_id=?",
+        (damage, user_id, boss["boss_id"])
+    )
+    conn.execute(
+        "UPDATE world_boss SET current_hp = MAX(0, current_hp - ?) WHERE boss_id=?",
+        (damage, boss["boss_id"])
+    )
     updated = conn.execute("SELECT current_hp FROM world_boss WHERE boss_id=?", (boss["boss_id"],)).fetchone()
     if updated and updated[0] <= 0:
         conn.execute("UPDATE world_boss SET status='defeated' WHERE boss_id=?", (boss["boss_id"],))
@@ -568,7 +684,6 @@ def get_top_boss_damagers():
 
 # ========== قدرات ==========
 def get_ability_count(user_id, ability):
-    # ✅ إصلاح SQL Injection: validation
     allowed_abilities = ['shield', 'double_points', 'reverse']
     if ability not in allowed_abilities:
         return 0
@@ -615,7 +730,10 @@ def buy_ability(user_id, ability):
 # ========== Mass Battle ==========
 def start_mass_battle(chat_id):
     conn = get_conn()
-    cur = conn.execute("INSERT INTO mass_battle (chat_id, start_time) VALUES (?, datetime('now'))", (chat_id,))
+    cur = conn.execute(
+        "INSERT INTO mass_battle (chat_id, start_time) VALUES (?, datetime('now'))",
+        (chat_id,)
+    )
     battle_id = cur.lastrowid
     conn.commit()
     conn.close()
@@ -623,19 +741,27 @@ def start_mass_battle(chat_id):
 
 def add_mass_pick(battle_id, user_id, move):
     conn = get_conn()
-    conn.execute("INSERT OR IGNORE INTO mass_battle_picks (battle_id, user_id, move) VALUES (?,?,?)",
-                 (battle_id, user_id, move))
+    conn.execute(
+        "INSERT OR IGNORE INTO mass_battle_picks (battle_id, user_id, move) VALUES (?,?,?)",
+        (battle_id, user_id, move)
+    )
     conn.commit()
     conn.close()
 
 def get_mass_battle_results(battle_id):
     conn = get_conn()
-    picks = conn.execute("SELECT move, COUNT(*) as cnt FROM mass_battle_picks WHERE battle_id=? GROUP BY move", (battle_id,)).fetchall()
+    picks = conn.execute(
+        "SELECT move, COUNT(*) as cnt FROM mass_battle_picks WHERE battle_id=? GROUP BY move",
+        (battle_id,)
+    ).fetchall()
     winners = []
     if picks:
         sorted_picks = sorted(picks, key=lambda x: x["cnt"], reverse=True)
         winning_move = sorted_picks[0]["move"]
-        winner_rows = conn.execute("SELECT user_id FROM mass_battle_picks WHERE battle_id=? AND move=?", (battle_id, winning_move)).fetchall()
+        winner_rows = conn.execute(
+            "SELECT user_id FROM mass_battle_picks WHERE battle_id=? AND move=?",
+            (battle_id, winning_move)
+        ).fetchall()
         winners = [r["user_id"] for r in winner_rows]
     conn.execute("UPDATE mass_battle SET status='finished' WHERE battle_id=?", (battle_id,))
     conn.commit()
@@ -645,8 +771,10 @@ def get_mass_battle_results(battle_id):
 # ========== Team Battles ==========
 def create_team_battle(chat_id, team1_name, team2_name):
     conn = get_conn()
-    cur = conn.execute("INSERT INTO team_battles (chat_id, team1_name, team2_name) VALUES (?,?,?)",
-                      (chat_id, team1_name, team2_name))
+    cur = conn.execute(
+        "INSERT INTO team_battles (chat_id, team1_name, team2_name) VALUES (?,?,?)",
+        (chat_id, team1_name, team2_name)
+    )
     battle_id = cur.lastrowid
     conn.commit()
     conn.close()
@@ -654,14 +782,19 @@ def create_team_battle(chat_id, team1_name, team2_name):
 
 def add_team_player(battle_id, user_id, team):
     conn = get_conn()
-    conn.execute("INSERT OR IGNORE INTO team_battle_players (battle_id, user_id, team) VALUES (?,?,?)",
-                 (battle_id, user_id, team))
+    conn.execute(
+        "INSERT OR IGNORE INTO team_battle_players (battle_id, user_id, team) VALUES (?,?,?)",
+        (battle_id, user_id, team)
+    )
     conn.commit()
     conn.close()
 
 def get_team_players(battle_id, team):
     conn = get_conn()
-    rows = conn.execute("SELECT user_id FROM team_battle_players WHERE battle_id=? AND team=?", (battle_id, team)).fetchall()
+    rows = conn.execute(
+        "SELECT user_id FROM team_battle_players WHERE battle_id=? AND team=?",
+        (battle_id, team)
+    ).fetchall()
     conn.close()
     return [r["user_id"] for r in rows]
 
@@ -669,7 +802,7 @@ def get_team_players(battle_id, team):
 def get_channel_leaderboard(chat_id, limit=10):
     conn = get_conn()
     rows = conn.execute("""
-        SELECT u.first_name, c.points 
+        SELECT u.first_name, c.points
         FROM channel_user_points c JOIN users u ON c.user_id = u.user_id
         WHERE c.chat_id = ? ORDER BY c.points DESC LIMIT ?
     """, (chat_id, limit)).fetchall()
@@ -679,7 +812,6 @@ def get_channel_leaderboard(chat_id, limit=10):
 def get_weekly_channel_leaderboard(chat_id, limit=10):
     conn = get_conn()
     week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-    # ✅ إصلاح: التحقق من وجود العمود last_updated
     try:
         rows = conn.execute("""
             SELECT u.first_name, SUM(c.points) as total_points
@@ -689,7 +821,7 @@ def get_weekly_channel_leaderboard(chat_id, limit=10):
             ORDER BY total_points DESC LIMIT ?
         """, (chat_id, week_ago, limit)).fetchall()
     except sqlite3.OperationalError:
-        # لو العمود مش موجود، نستخدم الطريقة البديلة
+        # العمود last_updated غير موجود → نستخدم الطريقة البديلة
         rows = conn.execute("""
             SELECT u.first_name, SUM(c.points) as total_points
             FROM channel_user_points c JOIN users u ON c.user_id = u.user_id
@@ -710,7 +842,6 @@ def buy_item(user_id, item_type, item_id):
         return False, "المستخدم غير موجود"
 
     price = None
-    # تحديد السعر حسب النوع
     if item_type == "booster":
         item = conn.execute("SELECT * FROM shop WHERE item_id=?", (item_id,)).fetchone()
         if not item:
@@ -743,16 +874,13 @@ def buy_item(user_id, item_type, item_id):
         conn.close()
         return False, "نوع غير معروف"
 
-    # التحقق من النقاط الكافية
     if u["points"] < price:
         conn.close()
         return False, "نقاط غير كافية"
 
-    # خصم النقاط
     new_points = u["points"] - price
     conn.execute("UPDATE users SET points = ? WHERE user_id = ?", (new_points, user_id))
 
-    # إضافة العنصر للمستخدم حسب النوع
     if item_type == "booster":
         owned = (u["shop_items"] or "").split(",")
         if item_id not in owned:
