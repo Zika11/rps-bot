@@ -3,8 +3,9 @@ import json
 import logging
 import random
 from datetime import datetime, date, timedelta
-import config  # ✅ يستورد من config/__init__.py (اللي يستورد settings و constants)
+import config
 
+# ✅ استخدام config.DB_NAME بدلاً من الاسم الثابت
 DB = config.DB_NAME
 
 def get_conn():
