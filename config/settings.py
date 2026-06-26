@@ -1,12 +1,12 @@
 # config/settings.py
 """
-متغيرات البيئة والإعدادات الديناميكية.
-كل القيم اللي ممكن تتغير حسب البيئة (تطوير، إنتاج) أو حسب إعدادات المستخدم.
+متغيرات البيئة - Environment Variables
+يتم قراءتها من os.getenv()
 """
 
 import os
 
-# ========== توكن البوت ==========
+# ========== متغيرات البوت الأساسية ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 FOUNDER_ID = int(os.getenv("FOUNDER_ID", 0))
 
@@ -27,56 +27,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = os.getenv("LOG_FILE", "logs/bot.log")
 LOG_FORMAT = os.getenv("LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
-# ========== إعدادات اللعبة الديناميكية ==========
-DEFAULT_RATING = int(os.getenv("DEFAULT_RATING", 1000))
-RATING_K = int(os.getenv("RATING_K", 32))
-
-TREASURE_BOX_PRICE = int(os.getenv("TREASURE_BOX_PRICE", 100))
-WHEEL_COST = int(os.getenv("WHEEL_COST", 5))
-
-MAX_BATTLE_PASS_LEVEL = int(os.getenv("MAX_BATTLE_PASS_LEVEL", 10))
-BATTLE_PASS_XP_PER_LEVEL = int(os.getenv("BATTLE_PASS_XP_PER_LEVEL", 100))
-
-WAR_SEASON_DURATION_DAYS = int(os.getenv("WAR_SEASON_DAYS", 7))
-WAR_POINTS_PER_WIN = int(os.getenv("WAR_POINTS_PER_WIN", 3))
-
-SEASON_DURATION_DAYS = int(os.getenv("SEASON_DURATION_DAYS", 30))
-SEASON_RESET_RATING = int(os.getenv("SEASON_RESET_RATING", 1000))
-
-BOSS_HP = int(os.getenv("BOSS_HP", 1000))
-BOSS_SPAWN_INTERVAL_HOURS = int(os.getenv("BOSS_SPAWN_HOURS", 6))
-
-DROP_CHANCE = float(os.getenv("DROP_CHANCE", 0.1))
-EVENT_CHANCE = float(os.getenv("EVENT_CHANCE", 0.3))
-
-MASS_BATTLE_DURATION = int(os.getenv("MASS_BATTLE_DURATION", 30))
-MASS_BATTLE_REWARD = (int(os.getenv("MASS_BATTLE_POINTS", 30)), int(os.getenv("MASS_BATTLE_GEMS", 5)))
-
-CHANNEL_LOOP_INTERVAL = int(os.getenv("CHANNEL_INTERVAL", 60))
-CHANNEL_LOOP_TTL = int(os.getenv("CHANNEL_TTL", 30))
-CHANNEL_LOOP_REWARDS = {
-    "win": int(os.getenv("REWARD_WIN", 10)),
-    "draw": int(os.getenv("REWARD_DRAW", 5)),
-    "loss": int(os.getenv("REWARD_LOSS", 2))
-}
-
-STREAK_BONUS = int(os.getenv("STREAK_BONUS", 2))
-STREAK_MULTIPLIERS = {
-    3: int(os.getenv("STREAK_MULTIPLIER_3", 2)),
-    5: int(os.getenv("STREAK_MULTIPLIER_5", 3))
-}
-
-PREDICTION_BONUS = int(os.getenv("PREDICTION_BONUS", 3))
-VOTE_FREEZE_SECONDS = int(os.getenv("VOTE_FREEZE_SECONDS", 2))
-
-XP_PER_WIN = int(os.getenv("XP_PER_WIN", 20))
-XP_PER_LOSS = int(os.getenv("XP_PER_LOSS", 5))
-XP_PER_DRAW = int(os.getenv("XP_PER_DRAW", 10))
-
-REFERRAL_REWARD = int(os.getenv("REFERRAL_REWARD", 200))
-
 # ========== التحقق من المتغيرات الإجبارية ==========
 if not BOT_TOKEN:
-    raise ValueError("❌ BOT_TOKEN غير موجود! أضفه في متغيرات البيئة.")
+    raise ValueError("❌ BOT_TOKEN is required! Set it in environment variables.")
 if not FOUNDER_ID:
-    raise ValueError("❌ FOUNDER_ID غير موجود! أضف معرفك في متغيرات البيئة.")
+    raise ValueError("❌ FOUNDER_ID is required! Set it in environment variables.")
