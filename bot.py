@@ -7,10 +7,7 @@ from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-# ✅ استيراد config
 import config
-
-# استيراد الوحدات الأساسية
 import models
 import db
 import state
@@ -18,18 +15,15 @@ import keyboards
 import game_logic
 import utils
 
-# استيراد محرك اللعبة
 import engine.game_engine as game_engine
 import state as channel_state
 
-# استيراد الـ handlers
 import handlers.channel_handlers as channel_h
 import handlers.game_handlers as game_h
 import handlers.shop_handlers as shop_h
 import handlers.social_handlers as social_h
 import handlers.misc_handlers as misc_h
 
-# استيراد معالجات الأزرار
 from handlers.callbacks import (
     navigation_handler,
     game_handler,
@@ -39,7 +33,6 @@ from handlers.callbacks import (
     admin_handler
 )
 
-# استيراد الأوامر
 from handlers.commands import (
     start, me_command, daily_command, referral_command,
     game_command, web_command,
@@ -47,15 +40,14 @@ from handlers.commands import (
     admin_panel, start_channel_command, stop_channel_command,
     massbattle_command, teambattle_command, drop_command
 )
+
 from handlers.commands.admin_commands import (
     admin_stats, admin_broadcast_prompt, admin_set_points_prompt,
     admin_channels_list, admin_reset_games
 )
 
-# استيراد المهام الخلفية
 from tasks import run_cleanup, run_auto_drops
 
-# استيراد نظام اللوجينج المحسن
 try:
     from utils.logging_utils import logger
 except ImportError:
@@ -63,21 +55,23 @@ except ImportError:
     logger = logging.getLogger(__name__)
     logger.warning("⚠️ utils.logging_utils غير موجود، استخدام logging عادي")
 
-# استيراد خدمات التخزين المؤقت
 try:
     from services.cache_service import cache
 except ImportError:
     cache = None
+    logger.warning("⚠️ services.cache_service غير موجود")
 
 try:
     from core.redis_client import redis_client
 except ImportError:
     redis_client = None
+    logger.warning("⚠️ core.redis_client غير موجود")
 
 try:
     from core.google_sheets import gsheets
 except ImportError:
     gsheets = None
+    logger.warning("⚠️ core.google_sheets غير موجود")
 
 # ==================== تهيئة قاعدة البيانات ====================
 models.init_db()
@@ -189,16 +183,19 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=keyboards.channel_main_menu(chat_id)
     )
 
-# ==================== دوال الإدارة (اللي كانت في bot.py) ====================
+# ==================== أوامر الإدارة (مباشرة في bot.py) ====================
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not utils.is_founder(update.effective_user.id):
+    """لوحة التحكم للمؤسس - تعريف مباشر في bot.py"""
+    user = update.effective_user
+    # ✅ استخدم utils.is_founder
+    if not utils.is_founder(user.id):
+        await update.message.reply_text(f"❌ غير مصرح لك. معرفك: {user.id}")
         return
     await update.message.reply_text("🛡️ **لوحة التحكم**", reply_markup=keyboards.admin_menu())
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     total_users = len(db.get_all_user_ids())
-    # ✅ استخدم config.DB_NAME بدل الاسم الثابت
     conn = sqlite3.connect(config.DB_NAME)
     total_games = conn.execute("SELECT COUNT(*) FROM active_games").fetchone()[0]
     total_clans = conn.execute("SELECT COUNT(*) FROM clans").fetchone()[0]
@@ -227,7 +224,6 @@ async def admin_channels_list(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def admin_reset_games(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    # ✅ استخدم config.DB_NAME بدل الاسم الثابت
     conn = sqlite3.connect(config.DB_NAME)
     conn.execute("DELETE FROM active_games")
     conn.execute("DELETE FROM pending_matches")
@@ -235,7 +231,6 @@ async def admin_reset_games(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     await query.answer("تم مسح المباريات العالقة.")
 
-# ==================== أوامر القناة (القديمة) ====================
 async def start_channel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not utils.is_founder(update.effective_user.id):
         return
@@ -288,7 +283,6 @@ async def stop_channel_command(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         await update.message.reply_text(f"خطأ: {str(e)}")
 
-# ==================== الأوامر الجماعية ====================
 async def massbattle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     battle_id = db.start_mass_battle(chat_id)
@@ -324,7 +318,6 @@ async def teambattle_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(f"🔴 {team1} vs {team2} 🔵\nاضغط للانضمام لفريق:",
                                    reply_markup=keyboards.team_battle_team_buttons(battle_id))
     await asyncio.sleep(60)
-    # ✅ استخدم config.DB_NAME بدل الاسم الثابت
     conn = sqlite3.connect(config.DB_NAME)
     battle = conn.execute("SELECT * FROM team_battles WHERE battle_id=?", (battle_id,)).fetchone()
     if not battle:
