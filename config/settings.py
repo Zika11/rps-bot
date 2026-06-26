@@ -11,14 +11,14 @@ GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 
 # ========== Redis ==========
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-REDIS_ENABLED = os.getenv("REDIS_ENABLED", "True").lower() == "true"
+REDIS_ENABLED = os.getenv("REDIS_ENABLED", "False").lower() == "true"  # ✅ False افتراضي عشان متعطلش
 
 # ========== Logging ==========
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = os.getenv("LOG_FILE", "logs/bot.log")
 LOG_FORMAT = os.getenv("LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
-# التحقق من المتغيرات الإجبارية
+# ========== التحقق من المتغيرات الإجبارية ==========
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN is required!")
 if not FOUNDER_ID:
