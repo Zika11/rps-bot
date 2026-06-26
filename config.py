@@ -1,10 +1,15 @@
 import os
 
 # ========== متغيرات البيئة الأساسية ==========
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
-FOUNDER_ID = int(os.getenv("FOUNDER_ID", 1232067711))
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+FOUNDER_ID = os.getenv("FOUNDER_ID")
 
-# ========== قاعدة البيانات ==========
+# ✅ التحقق من وجود FOUNDER_ID
+if not FOUNDER_ID:
+    raise ValueError("❌ FOUNDER_ID is required! Set it in environment variables.")
+FOUNDER_ID = int(FOUNDER_ID)
+
+# ========== قاعدة البيانات (دعم Railway Volume) ==========
 DATA_DIR = os.getenv("DATA_DIR", ".")
 DB_NAME = os.path.join(DATA_DIR, "rps_bot.db")
 
