@@ -1,3 +1,6 @@
 # config/__init__.py
-# استيراد كل حاجة من ملف config.py الأصلي
+# استيراد كل الثوابت من config.py القديم
 from config import *
+
+# استيراد إعدادات البيئة
+from .settings import *
