@@ -1,2 +1,3 @@
 # config/__init__.py
-from .settings import *
+# استيراد كل حاجة من ملف config.py الأصلي
+from config import *
