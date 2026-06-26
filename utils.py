@@ -1,9 +1,12 @@
-import json, logging, random
+import json
+import logging
+import random
 from collections import defaultdict
 from config import *
 import db
 
 def is_founder(user_id):
+    """التحقق مما إذا كان المستخدم هو المؤسس."""
     return user_id == FOUNDER_ID
 
 def get_choices_for_user(user_id):
@@ -24,31 +27,24 @@ def markov_bot_choice(user_id):
     except:
         moves = []
     if len(moves) < 3:
-        # عدد الحركات غير كافي -> عشوائي
         return random.choice(list(CHOICES.keys()))
 
-    # بناء نموذج Markov order-2: (moves[-2], moves[-1]) -> التكرارات
     chain = defaultdict(lambda: defaultdict(int))
     for i in range(len(moves) - 2):
         key = (moves[i], moves[i+1])
         next_move = moves[i+2]
         chain[key][next_move] += 1
 
-    # آخر حركتين للمستخدم
     last_two = (moves[-2], moves[-1])
     possible = chain.get(last_two)
     if not possible:
-        # لا توجد بيانات، استخدم توقع عشوائي
         predicted = random.choice(list(CHOICES.keys()))
     else:
-        # اختر التوقع الأكثر تكراراً
         predicted = max(possible, key=possible.get)
 
-    # اختيار الحركة المضادة للتوقع
     for k, v in WIN_MAP.items():
         if v == predicted:
             return k
-    # احتياطي
     return random.choice(list(CHOICES.keys()))
 
 def update_user_moves(user_id, move):
