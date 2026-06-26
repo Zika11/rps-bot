@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-# استيراد config (يعمل سواء كان ملف config.py في الجذر أو مجلد config/ مع __init__.py)
-import config
+# ✅ استيراد من config الجديد
+import config  # config/__init__.py يستورد settings و constants تلقائياً
 
 # استيراد الوحدات الأساسية
 import models
@@ -59,7 +59,6 @@ from tasks import run_cleanup, run_auto_drops
 try:
     from utils.logging_utils import logger
 except ImportError:
-    # في حالة عدم وجود logging_utils، استخدم logging العادي
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger(__name__)
     logger.warning("⚠️ utils.logging_utils غير موجود، استخدام logging عادي")
@@ -95,7 +94,6 @@ else:
 
 if gsheets and hasattr(gsheets, 'is_connected') and gsheets.is_connected():
     logger.info("✅ Google Sheets متصل")
-    # محاولة تحميل الإعدادات
     try:
         if cache:
             gsheet_settings = cache.get_settings()
@@ -153,7 +151,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pts = int(parts[1])
                 gems = int(parts[2])
                 db.update_user(uid, points=pts, gems=gems)
-                # مسح الكاش إذا كان موجوداً
                 if cache and hasattr(cache, 'clear_user_cache'):
                     cache.clear_user_cache(uid)
                 await update.message.reply_text("تم التحديث")
@@ -209,7 +206,7 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
 def main():
     """النقطة الرئيسية لتشغيل البوت"""
     # التحقق من وجود التوكن
-    if not config.BOT_TOKEN or config.BOT_TOKEN == "YOUR_BOT_TOKEN":
+    if not config.BOT_TOKEN or config.BOT_TOKEN == "":
         logger.error("❌ BOT_TOKEN غير موجود! أضفه في متغيرات البيئة")
         return
 
@@ -236,38 +233,25 @@ def main():
     app.add_handler(CommandHandler("web", web_command))
     app.add_handler(CommandHandler("game", game_command))
 
-    # -------------------- معالجات الأزرار (مقسمة حسب البادئة) --------------------
-    # حركات القناة (move_*)
+    # -------------------- معالجات الأزرار --------------------
     app.add_handler(CallbackQueryHandler(channel_h.handle_move, pattern="^move_"))
-    
-    # الملاحة الأساسية
     app.add_handler(CallbackQueryHandler(navigation_handler, pattern="^(back_main|delete_message|language|profile)$"))
-    
-    # أزرار اللعب
     app.add_handler(CallbackQueryHandler(
         game_handler,
         pattern="^(game|solo|random|friend|channel|spock|story|group_|pick_|spockpick_|open_|join_tournament_|accept_challenge_|reject_challenge_|spectate_|play_|mode_|rematch_)"
     ))
-    
-    # أزرار القناة والمهام والإنجازات والتصنيف والعجلة
     app.add_handler(CallbackQueryHandler(
         channel_handler,
         pattern="^(channel_play|weekly_leaderboard|ch_leaderboard_|predict_|tasks|achievements|rating|battlepass|wheel)"
     ))
-    
-    # أزرار المتجر
     app.add_handler(CallbackQueryHandler(
         shop_handler,
         pattern="^(shop|shop_cards|buy_|shop_titles|buy_title_|shop_themes|buy_theme_|frames_shop|buy_frame_|abilities_shop|buy_ability_|market|treasure_box)"
     ))
-    
-    # أزرار الأصدقاء والعشائر
     app.add_handler(CallbackQueryHandler(
         social_handler,
         pattern="^(friends|add_friend|friend_requests|friend_list|accept_friend_|reject_friend_|clans|clan_|treasury_|do_upgrade_|clan_war_info)"
     ))
-    
-    # أزرار الإدارة (للمؤسس فقط)
     app.add_handler(CallbackQueryHandler(admin_handler, pattern="^admin_"))
 
     # -------------------- معالج النصوص --------------------
@@ -275,10 +259,9 @@ def main():
 
     # -------------------- المهام الخلفية --------------------
     loop = asyncio.get_event_loop()
-    loop.create_task(run_cleanup())        # تنظيف الألعاب العالقة
-    loop.create_task(run_auto_drops(app))  # إسقاط الصناديق التلقائية
+    loop.create_task(run_cleanup())
+    loop.create_task(run_auto_drops(app))
 
-    # -------------------- بدء البوت --------------------
     logger.info("🚀 البوت يعمل...")
     app.run_polling()
 
