@@ -15,7 +15,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== قائمة أنماط اللعب =====
     if data == "game":
-        await query.edit_message_text("اختر نمط اللعب:", reply_markup=keyboards.game_mode_menu())
+        await query.edit_message_text("اختر نمط اللعب:", reply_markup=keyboards.game_mode_selection())
         return True
 
     elif data == "solo":
@@ -43,6 +43,42 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "story":
         await query.edit_message_text("وضع القصة قيد التطوير...", reply_markup=keyboards.back_button())
+        return True
+
+    # ===== أزرار أوضاع اللعب الجديدة =====
+    elif data == "mode_bot":
+        await game_h.start_vs_bot(update, context)
+        return True
+
+    elif data == "mode_friend":
+        await game_h.start_vs_friend(update, context)
+        return True
+
+    elif data == "mode_random":
+        await game_h.start_random_game(update, context)
+        return True
+
+    elif data == "mode_tournament":
+        await misc_h.tournament_menu(update, context)
+        return True
+
+    # ===== أزرار الحركات الجديدة =====
+    elif data.startswith("play_"):
+        move = data.split("_")[1]
+        if move not in ["rock", "paper", "scissors"]:
+            await query.answer("حركة غير صالحة!")
+            return True
+        game_id = context.user_data.get("active_game")
+        if not game_id:
+            await query.answer("مافيش لعبة نشطة! ابدأ لعبة جديدة.")
+            return True
+        await game_h.process_move(update, context, move, game_id)
+        return True
+
+    # ===== إعادة اللعب =====
+    elif data.startswith("rematch_"):
+        game_id = data.split("_")[1]
+        await game_h.rematch(update, context, game_id)
         return True
 
     # ===== التحديات والمجموعات =====
@@ -89,7 +125,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await misc_h.spectate_room_create(update, context)
         return True
 
-    # ===== اختيار الحركات =====
+    # ===== اختيار الحركات القديمة =====
     elif data.startswith("pick_"):
         parts = data.split("_", 2)
         if len(parts) < 3:
