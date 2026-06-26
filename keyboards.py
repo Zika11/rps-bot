@@ -3,31 +3,45 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 def main_menu(lang="ar"):
     if lang == "ar":
         btns = [
-            ("🎮 لعب", "game"), ("👥 أصدقاء", "friends"),
-            ("🛒 متجر", "shop"), ("🏆 عشائر", "clans"),
-            ("📋 المهام", "tasks"), ("🏅 الإنجازات", "achievements"),
-            ("📊 التصنيف", "rating"), ("🌐 اللغة", "language")
+            ("🎮 لعب", "game"),
+            ("👥 أصدقاء", "friends"),
+            ("🛒 متجر", "shop"),
+            ("🏆 عشائر", "clans"),
+            ("📋 المهام", "tasks"),
+            ("🏅 الإنجازات", "achievements"),
+            ("📊 التصنيف", "rating"),
+            ("🌐 اللغة", "language")
         ]
     else:
         btns = [
-            ("🎮 Play", "game"), ("👥 Friends", "friends"),
-            ("🛒 Shop", "shop"), ("🏆 Clans", "clans"),
-            ("📋 Tasks", "tasks"), ("🏅 Achievements", "achievements"),
-            ("📊 Rating", "rating"), ("🌐 Language", "language")
+            ("🎮 Play", "game"),
+            ("👥 Friends", "friends"),
+            ("🛒 Shop", "shop"),
+            ("🏆 Clans", "clans"),
+            ("📋 Tasks", "tasks"),
+            ("🏅 Achievements", "achievements"),
+            ("📊 Rating", "rating"),
+            ("🌐 Language", "language")
         ]
     keyboard = [[InlineKeyboardButton(text, callback_data=data) for text, data in btns[i:i+2]] for i in range(0, len(btns), 2)]
     return InlineKeyboardMarkup(keyboard)
 
 def game_mode_menu(lang="ar"):
     modes = [
-        ("🕹️ فردي", "solo"), ("🌍 عشوائي", "random"),
-        ("👤 ضد صديق", "friend"), ("📢 قناة", "channel"),
-        ("🖖 Spock", "spock"), ("📖 القصة", "story"),
+        ("🕹️ فردي", "solo"),
+        ("🌍 عشوائي", "random"),
+        ("👤 ضد صديق", "friend"),
+        ("📢 قناة", "channel"),
+        ("🖖 Spock", "spock"),
+        ("📖 القصة", "story"),
         ("🔙 رجوع", "back_main")
     ] if lang == "ar" else [
-        ("🕹️ Solo", "solo"), ("🌍 Random", "random"),
-        ("👤 vs Friend", "friend"), ("📢 Channel", "channel"),
-        ("🖖 Spock", "spock"), ("📖 Story", "story"),
+        ("🕹️ Solo", "solo"),
+        ("🌍 Random", "random"),
+        ("👤 vs Friend", "friend"),
+        ("📢 Channel", "channel"),
+        ("🖖 Spock", "spock"),
+        ("📖 Story", "story"),
         ("🔙 Back", "back_main")
     ]
     return InlineKeyboardMarkup([[InlineKeyboardButton(text, callback_data=data)] for text, data in modes])
@@ -114,7 +128,8 @@ def frame_shop():
     from config import AVATAR_FRAMES, FRAME_PRICES
     buttons = []
     for frame_id, icon in AVATAR_FRAMES.items():
-        if frame_id == "default": continue
+        if frame_id == "default":
+            continue
         price = FRAME_PRICES.get(frame_id, 200)
         buttons.append([InlineKeyboardButton(f"{icon} {frame_id} - {price} نقطة", callback_data=f"buy_frame_{frame_id}")])
     buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="shop")])
@@ -175,13 +190,13 @@ def abilities_shop():
 
 def mass_battle_start_button(chat_id):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚡ انضم للمعركة الجماعية", callback_data=f"mass_join_{chat_id}")],
+        [InlineKeyboardButton("⚡ انضم للمعركة الجماعية", callback_data=f"mass_join_{chat_id}")]
     ])
 
 def team_battle_team_buttons(battle_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔴 انضم للفريق الأحمر", callback_data=f"team_join_{battle_id}_red")],
-        [InlineKeyboardButton("🔵 انضم للفريق الأزرق", callback_data=f"team_join_{battle_id}_blue")],
+        [InlineKeyboardButton("🔵 انضم للفريق الأزرق", callback_data=f"team_join_{battle_id}_blue")]
     ])
 
 def channel_vote_buttons(chat_id):
@@ -234,4 +249,36 @@ def dynamic_rps_keyboard(counts):
             InlineKeyboardButton(f"📄 ورق ({counts.get('paper', 0)})", callback_data="move_paper"),
             InlineKeyboardButton(f"✂️ مقص ({counts.get('scissors', 0)})", callback_data="move_scissors"),
         ]
+    ])
+
+# ========== أزرار اللعب الجديدة ==========
+def game_play_buttons():
+    """أزرار اختيار الحركة في اللعبة"""
+    from config import CHOICES
+    buttons = []
+    row = []
+    for key, icon in CHOICES.items():
+        row.append(InlineKeyboardButton(icon, callback_data=f"play_{key}"))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    return InlineKeyboardMarkup(buttons)
+
+def game_mode_selection():
+    """أزرار اختيار نمط اللعب"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🆚 ضد البوت", callback_data="mode_bot")],
+        [InlineKeyboardButton("👥 ضد صديق", callback_data="mode_friend")],
+        [InlineKeyboardButton("🎲 عشوائي", callback_data="mode_random")],
+        [InlineKeyboardButton("🏆 بطولة", callback_data="mode_tournament")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
+    ])
+
+def game_result_buttons(game_id):
+    """أزرار إعادة اللعب أو العودة"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 إعادة اللعب", callback_data=f"rematch_{game_id}")],
+        [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="back_main")]
     ])
