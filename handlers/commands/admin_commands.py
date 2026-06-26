@@ -45,9 +45,7 @@ async def start_channel_command(update: Update, context: ContextTypes.DEFAULT_TY
         task = asyncio.create_task(channel_h.channel_voting_loop(chat_id, context))
         async with state.channel_settings_lock:
             state.channel_settings[chat_id] = {"interval": interval, "ttl": ttl, "task": task}
-        await update.message.reply_text(
-            f"تم بدء جولات التصويت التلقائي في {chat.title}\nالفاصل: {interval}s | حذف الرسالة: {ttl}s"
-        )
+        await update.message.reply_text(f"تم بدء جولات التصويت التلقائي في {chat.title}\nالفاصل: {interval}s | حذف الرسالة: {ttl}s")
     except Exception as e:
         await update.message.reply_text(f"خطأ: {str(e)}")
 
@@ -74,40 +72,28 @@ async def stop_channel_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ========== دوال الإدارة المستخدمة في الأزرار ==========
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض إحصائيات البوت"""
     query = update.callback_query
     total_users = len(db.get_all_user_ids())
     conn = sqlite3.connect(config.DB_NAME)
     total_games = conn.execute("SELECT COUNT(*) FROM active_games").fetchone()[0]
     total_clans = conn.execute("SELECT COUNT(*) FROM clans").fetchone()[0]
     conn.close()
-    text = (
-        f"👥 المستخدمين: {total_users}\n"
-        f"🎮 المباريات النشطة: {total_games}\n"
-        f"🏰 العشائر: {total_clans}"
-    )
+    text = (f"👥 المستخدمين: {total_users}\n"
+            f"🎮 المباريات النشطة: {total_games}\n"
+            f"🏰 العشائر: {total_clans}")
     await query.edit_message_text(text, reply_markup=keyboards.admin_menu())
 
 async def admin_broadcast_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """طلب كتابة رسالة للبث"""
     query = update.callback_query
-    await query.edit_message_text(
-        "أرسل الرسالة التي تريد إرسالها للجميع:",
-        reply_markup=keyboards.back_button("admin")
-    )
+    await query.edit_message_text("أرسل الرسالة التي تريد إرسالها للجميع:", reply_markup=keyboards.back_button("admin"))
     context.user_data["awaiting_broadcast"] = True
 
 async def admin_set_points_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """طلب تعديل نقاط مستخدم"""
     query = update.callback_query
-    await query.edit_message_text(
-        "أرسل:\n`user_id points gems`",
-        reply_markup=keyboards.back_button("admin")
-    )
+    await query.edit_message_text("أرسل:\n`user_id points gems`", reply_markup=keyboards.back_button("admin"))
     context.user_data["awaiting_set_points"] = True
 
 async def admin_channels_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض القنوات المفعلة"""
     query = update.callback_query
     async with state.channel_settings_lock:
         chans = list(state.channel_settings.keys())
@@ -115,7 +101,6 @@ async def admin_channels_list(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(text, reply_markup=keyboards.admin_menu())
 
 async def admin_reset_games(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """مسح المباريات العالقة"""
     query = update.callback_query
     conn = sqlite3.connect(config.DB_NAME)
     conn.execute("DELETE FROM active_games")
