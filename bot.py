@@ -56,6 +56,7 @@ logger = logging.getLogger(__name__)
 
 models.init_db()
 
+
 # ==================== معالج الرسائل النصية ====================
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالج الرسائل النصية (للأوامر النصية غير المعرفة، البث، إدخال البيانات)"""
@@ -139,6 +140,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"تحدي صديق قيد التطوير (سيتم إعلام {target['first_name']}).")
             context.user_data["awaiting_friend_challenge"] = False
 
+
 async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     """معالج منشن البوت في المجموعة"""
     async with state.group_session_lock:
@@ -149,6 +151,7 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
         "مرحباً بك في RPS Arena!",
         reply_markup=keyboards.channel_main_menu(chat_id)
     )
+
 
 # ==================== تشغيل البوت ====================
 def main():
@@ -184,7 +187,7 @@ def main():
     # أزرار اللعب
     app.add_handler(CallbackQueryHandler(
         game_handler,
-        pattern="^(game|solo|random|friend|channel|spock|story|group_|pick_|spockpick_|open_|join_tournament_|accept_challenge_|reject_challenge_|spectate_)"
+        pattern="^(game|solo|random|friend|channel|spock|story|group_|pick_|spockpick_|open_|join_tournament_|accept_challenge_|reject_challenge_|spectate_|play_|mode_|rematch_)"
     ))
     # أزرار القناة والمهام والإنجازات والتصنيف والعجلة
     app.add_handler(CallbackQueryHandler(
@@ -215,6 +218,7 @@ def main():
     # -------------------- بدء البوت --------------------
     logger.info("🚀 البوت يعمل...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
