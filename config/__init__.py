@@ -1,6 +1,9 @@
 # config/__init__.py
-# استيراد كل الثوابت من config.py القديم
-from config import *
+"""
+وحدة الإعدادات المركزية.
+- settings: متغيرات البيئة والإعدادات الديناميكية
+- constants: الثوابت الخالصة (قوانين اللعبة، الجوائز، الأسعار...)
+"""
 
-# استيراد إعدادات البيئة
 from .settings import *
+from .constants import *
