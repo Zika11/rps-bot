@@ -3,7 +3,7 @@ import json
 import logging
 import random
 from datetime import datetime, date, timedelta
-import config
+import config  # ✅ يستورد من config/__init__.py (اللي يستورد settings و constants)
 
 DB = config.DB_NAME
 
