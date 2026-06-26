@@ -1,43 +1,38 @@
+# utils/logging_utils.py
 import logging
 import sys
 import os
-from datetime import datetime
 from logging.handlers import RotatingFileHandler
-import config.settings as settings
+from config.settings import LOG_LEVEL, LOG_FILE, LOG_FORMAT
 
 def setup_logging():
-    """إعداد نظام Logging متقدم"""
-    # إنشاء مجلد logs إذا مش موجود
-    log_dir = os.path.dirname(settings.LOG_FILE)
+    log_level = getattr(logging, LOG_LEVEL, logging.INFO)
+    log_file = LOG_FILE
+    log_format = LOG_FORMAT
+
+    log_dir = os.path.dirname(log_file)
     if log_dir and not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
-    # إعداد الـ Root Logger
     logger = logging.getLogger()
-    logger.setLevel(getattr(logging, settings.LOG_LEVEL, logging.INFO))
+    logger.setLevel(log_level)
 
-    # تنسيق الرسائل
-    formatter = logging.Formatter(settings.LOG_FORMAT)
+    formatter = logging.Formatter(log_format)
 
-    # معالج للملفات (تدوير تلقائي)
     file_handler = RotatingFileHandler(
-        settings.LOG_FILE,
-        maxBytes=10_000_000,  # 10 MB
+        log_file,
+        maxBytes=10_000_000,
         backupCount=5,
         encoding="utf-8"
     )
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
-    # معالج للكونسول
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # منع الـ propagation (تجنب التكرار)
     logger.propagate = False
-
     return logger
 
-# Logger جاهز للاستخدام
 logger = setup_logging()
