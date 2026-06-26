@@ -185,10 +185,10 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ==================== أوامر الإدارة (مباشرة في bot.py) ====================
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """لوحة التحكم للمؤسس - تعريف مباشر في bot.py"""
+    """لوحة التحكم للمؤسس - تستخدم config.FOUNDER_ID مباشرة"""
     user = update.effective_user
-    # ✅ استخدم utils.is_founder
-    if not utils.is_founder(user.id):
+    # ✅ التحقق المباشر باستخدام config.FOUNDER_ID
+    if user.id != config.FOUNDER_ID:
         await update.message.reply_text(f"❌ غير مصرح لك. معرفك: {user.id}")
         return
     await update.message.reply_text("🛡️ **لوحة التحكم**", reply_markup=keyboards.admin_menu())
