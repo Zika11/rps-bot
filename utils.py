@@ -5,8 +5,9 @@ from collections import defaultdict
 from config import *
 import db
 
+# ========== دالة التحقق من المؤسس ==========
 def is_founder(user_id):
-    """التحقق مما إذا كان المستخدم هو المؤسس."""
+    """التحقق من أن المستخدم هو مؤسس البوت"""
     return user_id == FOUNDER_ID
 
 def get_choices_for_user(user_id):
@@ -17,7 +18,6 @@ def get_choices_for_user(user_id):
 def get_result(p1, p2):
     return "draw" if p1 == p2 else ("win" if WIN_MAP[p1] == p2 else "loss")
 
-# 🧠 ذكاء اصطناعي متطور - Markov Chain Order-2
 def markov_bot_choice(user_id):
     u = db.get_user(user_id)
     if not u:
@@ -49,11 +49,13 @@ def markov_bot_choice(user_id):
 
 def update_user_moves(user_id, move):
     u = db.get_user(user_id)
-    if not u: return
+    if not u:
+        return
     try:
         moves = json.loads(u.get("move_history", "[]"))
     except:
         moves = []
     moves.append(move)
-    if len(moves) > 50: moves = moves[-50:]
+    if len(moves) > 50:
+        moves = moves[-50:]
     db.update_user(user_id, move_history=json.dumps(moves))
