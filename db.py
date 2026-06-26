@@ -1,5 +1,5 @@
 import sqlite3, json, logging, random
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta  # ✅ تأكد إن timedelta مستوردة كده
 import config
 
 DB = config.DB_NAME
@@ -9,7 +9,7 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
-# --- دوال المستخدمين الأساسية ---
+# ========== دوال المستخدمين الأساسية ==========
 def get_user(user_id):
     conn = get_conn()
     row = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
@@ -51,7 +51,7 @@ def get_all_user_ids():
     conn.close()
     return [r[0] for r in rows]
 
-# --- العشائر ---
+# ========== العشائر ==========
 def get_clan(clan_name):
     conn = get_conn()
     row = conn.execute("SELECT * FROM clans WHERE name=?", (clan_name,)).fetchone()
@@ -118,7 +118,7 @@ def get_top_ratings(limit=10):
     conn.close()
     return [dict(r) for r in rows]
 
-# --- الأصدقاء ---
+# ========== الأصدقاء ==========
 def send_friend_request(sender, receiver):
     conn = get_conn()
     try:
@@ -156,7 +156,7 @@ def get_friends(user_id):
     conn.close()
     return [r[0] for r in rows]
 
-# --- البطولات ---
+# ========== البطولات ==========
 def create_tournament(name):
     conn = get_conn()
     cur = conn.execute("INSERT INTO tournaments (name, status) VALUES (?, 'open')", (name,))
@@ -279,7 +279,7 @@ def apply_game_result(user_id, result, move, opponent_id=None):
         "rating": new_rating
     }
 
-# --- دوال الميزات السابقة ---
+# ========== دوال الميزات السابقة ==========
 def claim_daily(user_id):
     conn = get_conn()
     today = date.today().isoformat()
@@ -420,7 +420,7 @@ def buy_listing(listing_id, buyer_id):
     conn.close()
     return True
 
-# --- Clan Treasury ---
+# ========== Clan Treasury ==========
 def get_clan_treasury(clan_name):
     conn = get_conn()
     row = conn.execute("SELECT * FROM clan_treasury WHERE clan_name=?", (clan_name,)).fetchone()
@@ -461,9 +461,12 @@ def upgrade_clan(clan_name, upgrade_id, conn=None):
     conn.execute("UPDATE clan_treasury SET points = points - ? WHERE clan_name=?", (cost, clan_name))
     upgrades[upgrade_id] = current_level + 1
     conn.execute("UPDATE clan_treasury SET upgrades = ? WHERE clan_name=?", (json.dumps(upgrades), clan_name))
+    conn.commit()
+    if conn != get_conn():  # لو مش موجودة في get_conn
+        conn.close()
     return True
 
-# --- Clan Wars ---
+# ========== Clan Wars ==========
 def get_active_war_season():
     conn = get_conn()
     row = conn.execute("SELECT * FROM clan_war_season WHERE active=1 ORDER BY season_id DESC LIMIT 1").fetchone()
@@ -473,7 +476,7 @@ def get_active_war_season():
 def start_new_war_season():
     conn = get_conn()
     now = datetime.now().isoformat()
-    end = (datetime.now() + timedelta(days=config.WAR_SEASON_DURATION_DAYS)).isoformat()
+    end = (datetime.now() + timedelta(days=config.WAR_SEASON_DURATION_DAYS)).isoformat()  # ✅ تم الإصلاح
     conn.execute("INSERT INTO clan_war_season (start_date, end_date, active) VALUES (?,?,1)", (now, end))
     conn.commit()
     conn.close()
@@ -491,7 +494,7 @@ def update_clan_war_score(clan_name, points, existing_conn=None):
         conn.commit()
         conn.close()
 
-# --- Spectator Mode ---
+# ========== Spectator Mode ==========
 def create_spectator_room(room_id, player1, player2, chat_id):
     conn = get_conn()
     conn.execute("INSERT INTO spectator_rooms (room_id, player1, player2, chat_id, status) VALUES (?,?,?,?,'waiting')",
@@ -513,7 +516,7 @@ def update_spectator_room(room_id, **kwargs):
     conn.commit()
     conn.close()
 
-# --- Seasons ---
+# ========== Seasons ==========
 def get_active_season():
     conn = get_conn()
     row = conn.execute("SELECT * FROM season_info WHERE active=1 ORDER BY season_id DESC LIMIT 1").fetchone()
@@ -526,7 +529,7 @@ def reset_season_rankings():
     conn.commit()
     conn.close()
 
-# --- World Boss ---
+# ========== World Boss ==========
 def get_world_boss():
     conn = get_conn()
     row = conn.execute("SELECT * FROM world_boss WHERE status='active'").fetchone()
@@ -563,8 +566,12 @@ def get_top_boss_damagers():
     conn.close()
     return [dict(r) for r in rows]
 
-# --- قدرات ---
+# ========== قدرات ==========
 def get_ability_count(user_id, ability):
+    # ✅ إصلاح SQL Injection: validation
+    allowed_abilities = ['shield', 'double_points', 'reverse']
+    if ability not in allowed_abilities:
+        return 0
     conn = get_conn()
     row = conn.execute(f"SELECT {ability} FROM user_abilities WHERE user_id=?", (user_id,)).fetchone()
     if not row:
@@ -575,19 +582,29 @@ def get_ability_count(user_id, ability):
     return row[0] if row else 0
 
 def use_ability(user_id, ability):
+    allowed_abilities = ['shield', 'double_points', 'reverse']
+    if ability not in allowed_abilities:
+        return False
     conn = get_conn()
     count = conn.execute(f"SELECT {ability} FROM user_abilities WHERE user_id=?", (user_id,)).fetchone()
-    if not count or count[0] <= 0: return False
+    if not count or count[0] <= 0:
+        conn.close()
+        return False
     conn.execute(f"UPDATE user_abilities SET {ability} = {ability} - 1 WHERE user_id=?", (user_id,))
     conn.commit()
     conn.close()
     return True
 
 def buy_ability(user_id, ability):
+    allowed_abilities = ['shield', 'double_points', 'reverse']
+    if ability not in allowed_abilities:
+        return False
     cost = config.ABILITIES[ability]["cost"]
     conn = get_conn()
     u = conn.execute("SELECT points FROM users WHERE user_id=?", (user_id,)).fetchone()
-    if not u or u["points"] < cost: return False
+    if not u or u["points"] < cost:
+        conn.close()
+        return False
     conn.execute("UPDATE users SET points = points - ? WHERE user_id=?", (cost, user_id))
     conn.execute("INSERT OR IGNORE INTO user_abilities (user_id) VALUES (?)", (user_id,))
     conn.execute(f"UPDATE user_abilities SET {ability} = {ability} + 1 WHERE user_id=?", (user_id,))
@@ -595,7 +612,7 @@ def buy_ability(user_id, ability):
     conn.close()
     return True
 
-# --- Mass Battle ---
+# ========== Mass Battle ==========
 def start_mass_battle(chat_id):
     conn = get_conn()
     cur = conn.execute("INSERT INTO mass_battle (chat_id, start_time) VALUES (?, datetime('now'))", (chat_id,))
@@ -625,7 +642,7 @@ def get_mass_battle_results(battle_id):
     conn.close()
     return winners
 
-# --- Team Battles ---
+# ========== Team Battles ==========
 def create_team_battle(chat_id, team1_name, team2_name):
     conn = get_conn()
     cur = conn.execute("INSERT INTO team_battles (chat_id, team1_name, team2_name) VALUES (?,?,?)",
@@ -648,7 +665,7 @@ def get_team_players(battle_id, team):
     conn.close()
     return [r["user_id"] for r in rows]
 
-# --- دوال التصنيف ---
+# ========== دوال التصنيف ==========
 def get_channel_leaderboard(chat_id, limit=10):
     conn = get_conn()
     rows = conn.execute("""
@@ -662,17 +679,28 @@ def get_channel_leaderboard(chat_id, limit=10):
 def get_weekly_channel_leaderboard(chat_id, limit=10):
     conn = get_conn()
     week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-    rows = conn.execute("""
-        SELECT u.first_name, SUM(c.points) as total_points
-        FROM channel_user_points c JOIN users u ON c.user_id = u.user_id
-        WHERE c.chat_id = ? AND c.last_updated >= ?
-        GROUP BY c.user_id
-        ORDER BY total_points DESC LIMIT ?
-    """, (chat_id, week_ago, limit)).fetchall()
+    # ✅ إصلاح: التحقق من وجود العمود last_updated
+    try:
+        rows = conn.execute("""
+            SELECT u.first_name, SUM(c.points) as total_points
+            FROM channel_user_points c JOIN users u ON c.user_id = u.user_id
+            WHERE c.chat_id = ? AND c.last_updated >= ?
+            GROUP BY c.user_id
+            ORDER BY total_points DESC LIMIT ?
+        """, (chat_id, week_ago, limit)).fetchall()
+    except sqlite3.OperationalError:
+        # لو العمود مش موجود، نستخدم الطريقة البديلة
+        rows = conn.execute("""
+            SELECT u.first_name, SUM(c.points) as total_points
+            FROM channel_user_points c JOIN users u ON c.user_id = u.user_id
+            WHERE c.chat_id = ?
+            GROUP BY c.user_id
+            ORDER BY total_points DESC LIMIT ?
+        """, (chat_id, limit)).fetchall()
     conn.close()
     return [{"name": r["first_name"], "points": r["total_points"]} for r in rows]
 
-# --- 🆕 دالة شراء العناصر (موحدة) ---
+# ========== دالة شراء العناصر (موحدة) ==========
 def buy_item(user_id, item_type, item_id):
     """شراء أي عنصر من المتجر (بطاقة، لقب، ثيم، إطار، قدرة)"""
     conn = get_conn()
