@@ -1,16 +1,9 @@
-# handlers/social_handlers.py
 import json
 import logging
+import uuid
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-import db, config, keyboards
-from core.social_manager import (
-    send_friend_request, get_pending_requests, accept_friend_request,
-    reject_friend_request, get_friends, get_user, get_user_by_username,
-    get_clan, create_clan, join_clan, get_all_clans,
-    get_clan_treasury, donate_points_to_clan, donate_gems_to_clan,
-    upgrade_clan, get_active_war_season, get_clan_war_scores
-)
+import db, config, keyboards, state
 
 logger = logging.getLogger(__name__)
 
@@ -28,32 +21,30 @@ async def add_friend_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_friend_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     username = update.message.text.strip().lstrip("@")
-    target = get_user_by_username(username)
+    target = db.get_user_by_username(username)
     if not target:
         await update.message.reply_text("لم يتم العثور على مستخدم بهذا المعرف.")
         return
     if target["user_id"] == user.id:
         await update.message.reply_text("لا يمكنك إضافة نفسك.")
         return
-    send_friend_request(user.id, target["user_id"])
+    db.send_friend_request(user.id, target["user_id"])
     await update.message.reply_text("تم إرسال طلب الصداقة.")
     context.user_data["awaiting_friend_username"] = False
 
 async def friend_requests_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
-    requests = get_pending_requests(user.id)
+    requests = db.get_pending_requests(user.id)
     if not requests:
         await query.edit_message_text("لا توجد طلبات صداقة.")
         return
     buttons = []
     for sender_id in requests:
-        sender = get_user(sender_id)
+        sender = db.get_user(sender_id)
         name = sender["first_name"] if sender else str(sender_id)
-        buttons.append([
-            InlineKeyboardButton(f"قبول من {name}", callback_data=f"accept_friend_{sender_id}"),
-            InlineKeyboardButton("رفض", callback_data=f"reject_friend_{sender_id}")
-        ])
+        buttons.append([InlineKeyboardButton(f"قبول من {name}", callback_data=f"accept_friend_{sender_id}"),
+                        InlineKeyboardButton("رفض", callback_data=f"reject_friend_{sender_id}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="friends")])
     await query.edit_message_text("طلبات الصداقة:", reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -63,24 +54,24 @@ async def handle_friend_action(update: Update, context: ContextTypes.DEFAULT_TYP
     data = query.data
     if data.startswith("accept_friend_"):
         sender_id = int(data.split("_")[-1])
-        accept_friend_request(sender_id, user.id)
+        db.accept_friend_request(sender_id, user.id)
         await query.answer("تم قبول الصداقة")
     elif data.startswith("reject_friend_"):
         sender_id = int(data.split("_")[-1])
-        reject_friend_request(sender_id, user.id)
+        db.reject_friend_request(sender_id, user.id)
         await query.answer("تم رفض الطلب")
     await friend_requests_list(update, context)
 
 async def friend_list_display(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
-    friends = get_friends(user.id)
+    friends = db.get_friends(user.id)
     if not friends:
         await query.edit_message_text("لا يوجد أصدقاء بعد.")
         return
     lines = []
     for fid in friends:
-        friend = get_user(fid)
+        friend = db.get_user(fid)
         name = friend["first_name"] if friend else "Unknown"
         lines.append(f"- {name}")
     text = "👥 أصدقائي:\n" + "\n".join(lines)
@@ -100,11 +91,11 @@ async def clan_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_clan_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     name = update.message.text.strip()
-    if get_clan(name):
+    if db.get_clan(name):
         await update.message.reply_text("الاسم موجود مسبقاً.")
         return
-    if create_clan(name, user.id):
-        join_clan(user.id, name)
+    if db.create_clan(name, user.id):
+        db.update_user(user.id, clan=name)
         await update.message.reply_text(f"تم إنشاء العشيرة {name}!")
     else:
         await update.message.reply_text("حدث خطأ.")
@@ -119,29 +110,29 @@ async def clan_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_join_clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     clan_name = update.message.text.strip()
-    clan = get_clan(clan_name)
+    clan = db.get_clan(clan_name)
     if not clan:
         await update.message.reply_text("العشيرة غير موجودة.")
         return
-    join_clan(user.id, clan_name)
+    db.update_user(user.id, clan=clan_name)
     await update.message.reply_text(f"انضممت إلى {clan_name}!")
     context.user_data["awaiting_join_clan"] = False
 
 async def clan_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    clans = get_all_clans()
+    clans = db.get_all_clans()
     text = "🏆 ترتيب العشائر:\n"
     if clans:
-        text += "\n".join([f"{i+1}. {c['name']} - {c['points']} نقطة" for i, c in enumerate(clans[:10])])
+        text += "\n".join([f"{i+1}. {c['name']} - {c['points']} نقطة" for i,c in enumerate(clans[:10])])
     else:
         text += "لا توجد عشائر بعد."
     await query.edit_message_text(text, reply_markup=keyboards.back_button())
 
-# ========== خزينة العشيرة ==========
+# ========== Clan Treasury ==========
 async def clan_treasury_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
-    u = get_user(user.id)
+    u = db.get_user(user.id)
     clan_name = u.get("clan")
     if not clan_name:
         await query.answer("أنت لست في عشيرة!")
@@ -151,7 +142,7 @@ async def clan_treasury_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def treasury_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     clan_name = query.data.split("_")[-1]
-    t = get_clan_treasury(clan_name)
+    t = db.get_clan_treasury(clan_name)
     if not t:
         await query.edit_message_text("الخزينة فارغة.")
         return
@@ -166,40 +157,46 @@ async def treasury_donate_points(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     user = query.from_user
     clan_name = query.data.split("_")[-1]
-    success, msg = donate_points_to_clan(user.id, clan_name, 50)
-    if success:
-        await query.answer(msg)
-    else:
-        await query.answer(msg)
+    u = db.get_user(user.id)
+    if u["points"] < 50:
+        await query.answer("تحتاج 50 نقطة على الأقل")
+        return
+    db.update_user(user.id, points=u["points"] - 50)
+    db.add_clan_treasury_points(clan_name, 50)
+    await query.answer("تم التبرع بـ 50 نقطة للعشيرة!")
 
 async def treasury_donate_gems(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     clan_name = query.data.split("_")[-1]
-    success, msg = donate_gems_to_clan(user.id, clan_name, 5)
-    if success:
-        await query.answer(msg)
-    else:
-        await query.answer(msg)
+    u = db.get_user(user.id)
+    if u["gems"] < 5:
+        await query.answer("تحتاج 5 جواهر")
+        return
+    db.update_user(user.id, gems=u["gems"] - 5)
+    db.add_clan_treasury_gems(clan_name, 5)
+    await query.answer("تم التبرع بـ 5 جواهر!")
 
 async def treasury_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     clan_name = query.data.split("_")[-1]
     buttons = []
-    for up_id in config.CLAN_UPGRADES:
-        buttons.append([InlineKeyboardButton(
-            config.CLAN_UPGRADES[up_id]['name'],
-            callback_data=f"do_upgrade_{clan_name}_{up_id}"
-        )])
+    for up_id, up_data in config.CLAN_UPGRADES.items():
+        buttons.append([InlineKeyboardButton(up_data['name'], callback_data=f"do_upgrade_{clan_name}_{up_id}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data=f"treasury_view_{clan_name}")])
     await query.edit_message_text("اختر تطويراً:", reply_markup=InlineKeyboardMarkup(buttons))
 
 async def do_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    parts = query.data.split("_")
+    # ✅ إصلاح parsing لأسماء العشائر التي تحتوي على _
+    parts = query.data.split("_", 3)  # do_upgrade_CLANNAME_UPID
+    if len(parts) < 4:
+        await query.answer("صيغة خاطئة!")
+        return
     clan_name = parts[2]
     upgrade_id = parts[3]
-    success = upgrade_clan(clan_name, upgrade_id)
+    
+    success = db.upgrade_clan(clan_name, upgrade_id)
     if success:
         await query.answer("تم التطوير بنجاح!")
     else:
@@ -208,11 +205,13 @@ async def do_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def clan_war_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    season = get_active_war_season()
+    season = db.get_active_war_season()
     if not season:
         await query.edit_message_text("لا يوجد موسم حرب عشائر نشط حالياً.")
         return
-    scores = get_clan_war_scores(season["season_id"])
+    conn = db.get_conn()
+    scores = conn.execute("SELECT clan_name, region, score FROM clan_war_scores WHERE season_id=? ORDER BY score DESC", (season["season_id"],)).fetchall()
+    conn.close()
     text = f"⚔️ موسم حرب العشائر (من {season['start_date'][:10]} إلى {season['end_date'][:10]})\n\n"
     if scores:
         text += "النتائج:\n"
