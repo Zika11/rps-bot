@@ -91,7 +91,7 @@ async def process_random_pick(update, context, move, game_id):
     else:
         await query.edit_message_text("تم تسجيل حركتك، بانتظار الخصم...")
 
-# ========== دوال البطولة (معدلة) ==========
+# ========== دوال البطولة ==========
 async def process_tournament_pick(update, context, move, tour_id, match_index):
     query = update.callback_query
     user = query.from_user
@@ -101,7 +101,6 @@ async def process_tournament_pick(update, context, move, tour_id, match_index):
         await query.answer("❌ البطولة غير موجودة!")
         return
 
-    # ✅ bracket يقرأ كـ dict
     try:
         bracket = json.loads(tour.get("bracket", "{}"))
         if not isinstance(bracket, dict):
@@ -119,13 +118,11 @@ async def process_tournament_pick(update, context, move, tour_id, match_index):
 
     match = matches[match_index]
     
-    # قراءة match_data
     match_data = json.loads(tour.get("match_data", "{}"))
     match_data[str(match_index)] = match_data.get(str(match_index), {})
     match_data[str(match_index)][str(user.id)] = move
     db.update_tournament(tour_id, match_data=json.dumps(match_data))
 
-    # التحقق من اكتمال الحركات
     if str(match["p1"]) in match_data[str(match_index)] and str(match["p2"]) in match_data[str(match_index)]:
         m1 = match_data[str(match_index)][str(match["p1"])]
         m2 = match_data[str(match_index)][str(match["p2"])]
@@ -135,7 +132,6 @@ async def process_tournament_pick(update, context, move, tour_id, match_index):
         bracket[round_key][match_index] = match
         db.update_tournament(tour_id, bracket=json.dumps(bracket))
 
-        # حساب الفائزين وتحديد الدور التالي
         if current_round == 1:
             winners = [m["winner"] for m in bracket.get("round1", []) if m.get("winner") is not None]
             if len(winners) == 4:
@@ -171,7 +167,6 @@ async def friend_challenge_prompt(update: Update, context: ContextTypes.DEFAULT_
     await query.edit_message_text("أرسل معرف الصديق (@username) لتحديه:")
     context.user_data["awaiting_friend_challenge"] = True
 
-# ========== دوال Spock ==========
 async def process_spock_move(update, context, move):
     query = update.callback_query
     user = query.from_user
@@ -193,7 +188,6 @@ async def process_spock_move(update, context, move):
     await query.edit_message_text(text, reply_markup=keyboards.game_result_buttons(game_id))
     state.finish_solo_game(game_id)
 
-# ========== دوال المجموعة ==========
 async def process_group_solo_pick(update, context, move, chat_id, player_id, game_id):
     query = update.callback_query
     user = query.from_user
