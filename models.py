@@ -82,6 +82,7 @@ def init_db():
         )
     """)
 
+    # ✅ إضافة match_data لجدول tournaments
     c.execute("""
         CREATE TABLE IF NOT EXISTS tournaments (
             tour_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -174,7 +175,8 @@ def init_db():
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS pending_matches (
-            user_id INTEGER PRIMARY KEY
+            user_id INTEGER PRIMARY KEY,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -396,12 +398,13 @@ def init_db():
         )
     """)
 
+    # ✅ إضافة عمود last_updated لـ channel_user_points
     c.execute("""
         CREATE TABLE IF NOT EXISTS channel_user_points (
             chat_id INTEGER,
             user_id INTEGER,
             points INTEGER DEFAULT 0,
-            last_updated TEXT DEFAULT (datetime('now')),
+            last_updated TEXT DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (chat_id, user_id)
         )
     """)
