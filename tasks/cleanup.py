@@ -15,10 +15,19 @@ async def run_cleanup():
         try:
             conn = sqlite3.connect(config.DB_NAME)
             cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
+            
             # حذف الألعاب النشطة التي مضى عليها أكثر من 5 دقائق
             conn.execute("DELETE FROM active_games WHERE created_at < ?", (cutoff,))
-            # حذف جميع المباريات المعلقة (في حالة عدم وجود خصم)
-            conn.execute("DELETE FROM pending_matches")
+            
+            # ✅ حذف المباريات المعلقة القديمة فقط (منذ أكثر من 5 دقائق)
+            # تأكد من وجود عمود created_at في جدول pending_matches
+            try:
+                conn.execute("DELETE FROM pending_matches WHERE created_at < ?", (cutoff,))
+            except sqlite3.OperationalError:
+                # لو العمود مش موجود (نسخة قديمة)، نحذف الكل
+                logger.warning("⚠️ pending_matches لا يحتوي على created_at، حذف الكل")
+                conn.execute("DELETE FROM pending_matches")
+            
             conn.commit()
             conn.close()
         except Exception as e:
