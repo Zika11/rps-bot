@@ -41,23 +41,25 @@
         .confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .message { margin-top: 1rem; padding: 0.5rem; border-radius: 8px; background: var(--tg-theme-hint-color, #0f3460); }
         .error { color: #e94560; margin: 1rem 0; }
-        .leaderboard { list-style: none; padding: 0; margin: 1rem 0; }
-        .leaderboard li { padding: 0.5rem 1rem; background: var(--tg-theme-secondary-bg-color, #16213e); margin: 0.25rem 0; border-radius: 8px; display: flex; justify-content: space-between; }
-        .live-stats { font-size: 0.9rem; color: #aaa; }
+        .leaderboard { list-style: none; text-align: right; }
+        .leaderboard li { padding: 0.5rem 1rem; background: #16213e; margin: 0.5rem 0; border-radius: 8px; display: flex; justify-content: space-between; }
+        .nav { display: flex; gap: 0.5rem; justify-content: center; margin: 1rem 0; }
+        .nav a { color: #e94560; text-decoration: none; padding: 0.5rem 1rem; border-radius: 8px; background: #16213e; }
+        .nav a:hover { background: #e94560; color: white; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>✊ ✋ ✌️</h1>
-        <p>حجر ورقة مقص</p>
+        <p style="margin-bottom: 1rem;">حجر ورقة مقص</p>
 
-        <div id="loading-section">
-            <p>⏳ جاري التحقق...</p>
+        <div class="nav">
+            <a href="#" onclick="showGame()">🎮 اللعبة</a>
+            <a href="#" onclick="showLeaderboard()">🏆 المتصدرون</a>
         </div>
 
-        <div id="game-section" style="display: none;">
+        <div id="game-section">
             <div class="status" id="round-status">جاري التحميل...</div>
-            <div id="live-stats" class="live-stats"></div>
             <div class="moves">
                 <button class="move-btn" onclick="selectMove('rock')">👊</button>
                 <button class="move-btn" onclick="selectMove('paper')">✋</button>
@@ -67,13 +69,11 @@
             <div class="message" id="message"></div>
         </div>
 
-        <div id="error-section" style="display: none;" class="error">
-            ⚠️ يرجى فتح التطبيق من داخل تيليجرام
-        </div>
-
         <div id="leaderboard-section" style="display: none;">
-            <h3>🏆 المتصدرون</h3>
-            <ul class="leaderboard" id="leaderboard-list"></ul>
+            <h2>🏆 المتصدرون</h2>
+            <ul class="leaderboard" id="leaderboard-list">
+                <li>لا توجد بيانات</li>
+            </ul>
         </div>
     </div>
 
@@ -84,24 +84,20 @@
         let selectedMove = null;
         let chatId = null;
         let currentUser = null;
-        let roundInterval = null;
 
         tg.ready();
         tg.expand();
 
-        // استخراج chat_id
         const params = new URLSearchParams(window.location.search);
         chatId = params.get('chat');
         if (!chatId && tg.initDataUnsafe?.start_param) {
             chatId = tg.initDataUnsafe.start_param;
         }
 
-        // التحقق التلقائي من المستخدم
         async function autoLogin() {
             const initData = tg.initData;
             if (!initData) {
-                document.getElementById('loading-section').style.display = 'none';
-                document.getElementById('error-section').style.display = 'block';
+                document.getElementById('game-section').innerHTML = '<div class="error">⚠️ يرجى فتح التطبيق من داخل تيليجرام</div>';
                 return;
             }
 
@@ -114,73 +110,31 @@
                 const data = await response.json();
                 if (data.valid) {
                     currentUser = tg.initDataUnsafe?.user;
-                    if (!currentUser) {
-                        throw new Error('No user data');
-                    }
-                    document.getElementById('loading-section').style.display = 'none';
-                    document.getElementById('game-section').style.display = 'block';
+                    if (!currentUser) throw new Error('No user data');
                     loadRoundStatus();
-                    loadLeaderboard();
-                    roundInterval = setInterval(loadRoundStatus, 3000);
+                    setInterval(loadRoundStatus, 3000);
                 } else {
                     throw new Error('Invalid');
                 }
             } catch (e) {
-                document.getElementById('loading-section').style.display = 'none';
-                document.getElementById('error-section').style.display = 'block';
+                document.getElementById('game-section').innerHTML = '<div class="error">⚠️ فشل التحقق من الحساب</div>';
             }
         }
 
         async function loadRoundStatus() {
-            if (!chatId) { 
-                document.getElementById('round-status').innerText = 'لم يتم تحديد قناة'; 
-                return; 
-            }
+            if (!chatId) { document.getElementById('round-status').innerText = 'لم يتم تحديد قناة'; return; }
             try {
                 const res = await fetch(`${API_BASE}/round/${chatId}`);
                 const data = await res.json();
-                const statusDiv = document.getElementById('round-status');
-                const statsDiv = document.getElementById('live-stats');
-
                 if (data.status === 'ACTIVE') {
-                    statusDiv.innerHTML = `✅ الجولة مفتوحة<br>👥 عدد المصوتين: ${data.players_count || 0}`;
+                    document.getElementById('round-status').innerHTML = `✅ الجولة مفتوحة<br>👥 عدد المصوتين: ${data.players_count || 0}`;
                     document.querySelectorAll('.move-btn').forEach(b => b.disabled = false);
-                    // تحديث الإحصائيات المباشرة
-                    if (data.counts) {
-                        const counts = data.counts;
-                        statsDiv.innerHTML = `
-                            🪨 حجر: ${counts.rock || 0} &nbsp;|&nbsp; 
-                            📄 ورق: ${counts.paper || 0} &nbsp;|&nbsp; 
-                            ✂️ مقص: ${counts.scissors || 0}
-                        `;
-                    }
                 } else {
-                    statusDiv.innerText = 'لا توجد جولة نشطة حالياً';
+                    document.getElementById('round-status').innerText = 'لا توجد جولة نشطة حالياً';
                     document.querySelectorAll('.move-btn').forEach(b => b.disabled = true);
-                    statsDiv.innerHTML = '';
                 }
             } catch (e) {
                 document.getElementById('round-status').innerText = 'خطأ في تحميل الحالة';
-            }
-        }
-
-        async function loadLeaderboard() {
-            if (!chatId) return;
-            try {
-                const res = await fetch(`${API_BASE}/leaderboard/${chatId}`);
-                const data = await res.json();
-                const list = document.getElementById('leaderboard-list');
-                list.innerHTML = '';
-                if (data.length > 0) {
-                    document.getElementById('leaderboard-section').style.display = 'block';
-                    data.forEach((p, i) => {
-                        const li = document.createElement('li');
-                        li.innerHTML = `<span>${i+1}. ${p.name}</span><span>${p.points} نقطة</span>`;
-                        list.appendChild(li);
-                    });
-                }
-            } catch (e) {
-                console.error('فشل تحميل المتصدرين:', e);
             }
         }
 
@@ -215,7 +169,35 @@
             }
         }
 
-        // بدء التشغيل
+        async function loadLeaderboard() {
+            try {
+                const res = await fetch(`${API_BASE}/leaderboard/${chatId || '-1001234567890'}`);
+                const data = await res.json();
+                const list = document.getElementById('leaderboard-list');
+                if (data.length === 0) {
+                    list.innerHTML = '<li>لا توجد بيانات بعد</li>';
+                    return;
+                }
+                list.innerHTML = data.map((p, i) => 
+                    `<li><span>${i+1}. ${p.name}</span><span>${p.points} نقطة</span></li>`
+                ).join('');
+            } catch (e) {
+                document.getElementById('leaderboard-list').innerHTML = '<li>خطأ في التحميل</li>';
+            }
+        }
+
+        function showGame() {
+            document.getElementById('game-section').style.display = 'block';
+            document.getElementById('leaderboard-section').style.display = 'none';
+            loadRoundStatus();
+        }
+
+        function showLeaderboard() {
+            document.getElementById('game-section').style.display = 'none';
+            document.getElementById('leaderboard-section').style.display = 'block';
+            loadLeaderboard();
+        }
+
         autoLogin();
     </script>
 </body>
