@@ -2,23 +2,38 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 import keyboards
-from core.matchmaking import matchmaking  # ✅ استيراد المثيل
+
+# استيراد matchmaking بشكل آمن (في حالة عدم وجود الملف)
+try:
+    from core.matchmaking import matchmaking
+except ImportError:
+    matchmaking = None
+    logging.warning("⚠️ core.matchmaking غير موجود، ميزة المطابقة معطلة")
 
 logger = logging.getLogger(__name__)
 
 async def game_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """أمر /game - فتح قائمة اللعب"""
-    await update.message.reply_text("اختر نمط اللعب:", reply_markup=keyboards.game_mode_menu())
+    await update.message.reply_text(
+        "🎮 اختر نمط اللعب:",
+        reply_markup=keyboards.game_mode_menu()
+    )
 
 async def web_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """أمر /web - رابط اللعبة على الويب"""
     chat_id = update.effective_chat.id
     base_url = "https://rps-bot-six.vercel.app"
     web_link = f"{base_url}/?chat={chat_id}"
-    await update.message.reply_text(f"🔗 رابط اللعبة على الويب:\n{web_link}")
+    await update.message.reply_text(
+        f"🔗 رابط اللعبة على الويب:\n{web_link}"
+    )
 
 async def matchmaking_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """أمر /matchmaking - عرض حالة قائمة الانتظار"""
+    if not matchmaking:
+        await update.message.reply_text("❌ ميزة المطابقة غير متاحة حالياً.")
+        return
+    
     count = matchmaking.get_pending_count()
     users = matchmaking.get_pending_users()
     text = f"👥 قائمة الانتظار: {count} لاعب\n"
