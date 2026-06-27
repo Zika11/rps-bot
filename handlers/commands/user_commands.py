@@ -32,34 +32,54 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if last:
                 last_date = date.fromisoformat(last[:10])
                 diff = (date.today() - last_date).days
-                if diff == 1: streak += 1
-                elif diff > 1: streak = 1
+                if diff == 1:
+                    streak += 1
+                elif diff > 1:
+                    streak = 1
             else:
                 streak = 1
             days = (date.today() - date.fromisoformat(u["registered_date"][:10])).days if u.get("registered_date") else 0
             db.update_user(user.id, last_login=datetime.now().isoformat(), login_streak=streak, days_since_register=days)
             await game_logic.check_achievements(user.id, context)
-        text = f"أهلاً {user.first_name}! اختر من القائمة:"
+
+        u = db.get_user(user.id)
+        points = u.get("points", 0)
+        rating = db.get_user_rating(user.id) or config.DEFAULT_RATING
+        rank = "غير مصنف"
+        for low, high, name, icon in config.RATING_TIERS:
+            if low <= rating <= high:
+                rank = f"{icon} {name}"
+                break
+
+        text = f"مرحباً {user.first_name}\n\n"
+        text += f"اختر من القائمة لبدء التحدي\n"
+        text += f"نقاطك: {points:,} | تصنيفك: {rank}\n\n"
+
         await update.message.reply_text(text, reply_markup=keyboards.main_menu())
+
     except Exception as e:
         logger.error(f"خطأ في أمر /start: {e}")
         await update.message.reply_text("حدث خطأ، الرجاء المحاولة لاحقاً.")
 
+# ========== me_command ==========
 async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     u = db.get_user(user.id)
     if not u:
         await update.message.reply_text("سجّل دخولك أولاً باستخدام /start")
         return
+
     rating = db.get_user_rating(user.id) or config.DEFAULT_RATING
     tier_name, tier_icon = config.get_tier_info(rating)
     frame = db.get_user_frame(user.id)
     frame_icon = config.AVATAR_FRAMES.get(frame, "⬛")
+
     wins = u.get("wins", 0)
     losses = u.get("losses", 0)
     draws = u.get("draws", 0)
     total = wins + losses + draws
     winrate = f"{(wins / total * 100):.1f}%" if total > 0 else "0%"
+
     xp = u.get("xp", 0)
     level = u.get("level", 1)
     level_title, level_icon = "مبتدئ", "🥉"
@@ -67,6 +87,7 @@ async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if level >= lvl:
             level_title, level_icon = config.LEVEL_TITLES[lvl]
             break
+
     profile_text = (
         f"{frame_icon} {u['first_name']}\n"
         f"🏅 التصنيف: {rating} نقطة\n"
@@ -82,6 +103,7 @@ async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(profile_text)
 
+# ========== daily_command ==========
 async def daily_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     result = db.claim_daily(user.id)
@@ -96,6 +118,7 @@ async def daily_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f" +{gems} جوهرة"
     await update.message.reply_text(text)
 
+# ========== referral_command ==========
 async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     bot_username = context.bot.username
@@ -104,3 +127,14 @@ async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     refs = u.get("referrals", 0) if u else 0
     text = f"🔗 **رابط الإحالة الخاص بك:**\n{ref_link}\n\nعدد المدعوين: {refs}\nكل من ينضم عبر هذا الرابط يكسبك {config.REFERRAL_REWARD} نقطة."
     await update.message.reply_text(text)
+
+# ========== game_command ==========
+async def game_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("اضغط للعب:", reply_markup=keyboards.mini_app_button())
+
+# ========== web_command ==========
+async def web_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    base_url = "https://rps-bot-six.vercel.app"
+    web_link = f"{base_url}/?chat={chat_id}"
+    await update.message.reply_text(f"🔗 رابط اللعبة على الويب:\n{web_link}")
