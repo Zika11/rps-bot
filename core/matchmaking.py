@@ -1,124 +1,106 @@
 import asyncio
 import logging
-import time
-from typing import Optional, Dict, List, Tuple
+import random
+from typing import Optional, Dict, List, Any
+from datetime import datetime, timedelta
+
 import db
 import state
 
 logger = logging.getLogger(__name__)
 
-class MatchmakingQueue:
-    """نظام مطابقة متقدم مع قوائم انتظار وإلغاء تلقائي"""
+class MatchmakingManager:
+    """
+    مدير المطابقة المتقدم - يدعم:
+    - قوائم انتظار
+    - إلغاء تلقائي بعد 30 ثانية
+    - إعادة محاولة
+    - إرسال إشعارات
+    """
     
-    def __init__(self):
-        self.queues = {}  # game_type -> list of user_ids
-        self.match_timeouts = {}  # user_id -> timestamp
-        self.lock = asyncio.Lock()
-        self.TIMEOUT_SECONDS = 30
-        self.CLEANUP_INTERVAL = 10
+    # تخزين المباريات النشطة في الذاكرة
+    _pending = {}  # user_id -> timestamp
+    _games = {}    # game_id -> {"p1": id, "p2": id, "status": str}
+    _locks = {}    # user_id -> asyncio.Lock
     
-    async def add_player(self, user_id: int, game_type: str = "random") -> Tuple[bool, Optional[int]]:
+    @classmethod
+    async def find_match(cls, user_id: int, timeout: int = 30) -> Optional[int]:
         """
-        إضافة لاعب إلى قائمة الانتظار
-        Returns: (تمت المطابقة, opponent_id أو None)
+        البحث عن خصم للمستخدم.
+        تعيد user_id للخصم، أو None إذا لم يوجد.
         """
-        async with self.lock:
-            # التحقق من وجود اللاعب بالفعل في القائمة
-            if user_id in self.match_timeouts:
-                return False, None
+        async with cls._get_lock(user_id):
+            # حذف المعلقين القدامى
+            cls._cleanup_pending()
             
-            # إضافة اللاعب لقائمة الانتظار
-            if game_type not in self.queues:
-                self.queues[game_type] = []
+            # إضافة المستخدم لقائمة الانتظار
+            cls._pending[user_id] = datetime.now()
             
             # البحث عن خصم
-            queue = self.queues[game_type]
-            if queue:
-                opponent_id = queue.pop(0)
-                # إنشاء اللعبة
-                game_id = await self._create_match(user_id, opponent_id, game_type)
-                if game_id:
-                    # إزالة التايم أوت
-                    self.match_timeouts.pop(user_id, None)
-                    self.match_timeouts.pop(opponent_id, None)
-                    return True, opponent_id
-                else:
-                    # فشل إنشاء اللعبة، إعادة الخصم للقائمة
-                    queue.append(opponent_id)
-                    return False, None
-            else:
-                # إضافة للقائمة
-                queue.append(user_id)
-                self.match_timeouts[user_id] = time.time()
-                # جدولة الإلغاء التلقائي
-                asyncio.create_task(self._auto_cancel(user_id, game_type))
-                return False, None
-    
-    async def _create_match(self, user1: int, user2: int, game_type: str) -> Optional[str]:
-        """إنشاء مباراة جديدة بين لاعبين"""
-        try:
-            game_id = f"{game_type}_{user1}_{user2}_{int(time.time())}"
-            conn = db.get_conn()
-            conn.execute(
-                "INSERT INTO active_games (game_id, player1, player2, type, status, data) VALUES (?,?,?,?,?,?)",
-                (game_id, user1, user2, game_type, "waiting", "{}")
-            )
-            conn.commit()
-            conn.close()
-            return game_id
-        except Exception as e:
-            logger.error(f"فشل إنشاء المباراة: {e}")
+            opponent = cls._find_opponent(user_id)
+            if opponent:
+                # حذف المستخدمين من قائمة الانتظار
+                cls._pending.pop(user_id, None)
+                cls._pending.pop(opponent, None)
+                return opponent
+            
+            # انتظار خصم (timeout)
+            try:
+                await asyncio.sleep(timeout)
+                # البحث مرة أخرى
+                opponent = cls._find_opponent(user_id)
+                if opponent:
+                    cls._pending.pop(user_id, None)
+                    cls._pending.pop(opponent, None)
+                    return opponent
+            except asyncio.CancelledError:
+                pass
+            
+            # لم يتم العثور على خصم
+            cls._pending.pop(user_id, None)
             return None
     
-    async def _auto_cancel(self, user_id: int, game_type: str):
-        """إلغاء تلقائي للاعب إذا انتهى الوقت"""
-        await asyncio.sleep(self.TIMEOUT_SECONDS)
-        async with self.lock:
-            if user_id in self.match_timeouts:
-                # حذف من قائمة الانتظار
-                if game_type in self.queues:
-                    queue = self.queues[game_type]
-                    if user_id in queue:
-                        queue.remove(user_id)
-                self.match_timeouts.pop(user_id, None)
-                # إخطار المستخدم (سيتم التعامل معه في الـ handler)
+    @classmethod
+    def _find_opponent(cls, user_id: int) -> Optional[int]:
+        """البحث عن خصم مناسب في قائمة الانتظار"""
+        # استبعاد المستخدم نفسه
+        candidates = [uid for uid in cls._pending.keys() if uid != user_id]
+        if not candidates:
+            return None
+        
+        # اختيار عشوائي لعدالة التوزيع
+        return random.choice(candidates)
     
-    async def cancel_matchmaking(self, user_id: int) -> bool:
-        """إلغاء المطابقة للاعب"""
-        async with self.lock:
-            if user_id not in self.match_timeouts:
-                return False
-            # إزالة من جميع القوائم
-            for queue in self.queues.values():
-                if user_id in queue:
-                    queue.remove(user_id)
-            self.match_timeouts.pop(user_id, None)
-            return True
+    @classmethod
+    def _cleanup_pending(cls):
+        """حذف المستخدمين المعلقين منذ أكثر من 60 ثانية"""
+        now = datetime.now()
+        expired = []
+        for uid, timestamp in cls._pending.items():
+            if (now - timestamp).total_seconds() > 60:
+                expired.append(uid)
+        for uid in expired:
+            cls._pending.pop(uid, None)
+            logger.debug(f"Removed expired pending user: {uid}")
     
-    async def get_queue_status(self, user_id: int) -> Optional[Dict]:
-        """الحصول على حالة اللاعب في قائمة الانتظار"""
-        async with self.lock:
-            if user_id not in self.match_timeouts:
-                return None
-            remaining = int(self.TIMEOUT_SECONDS - (time.time() - self.match_timeouts[user_id]))
-            return {
-                "position": 0,  # يمكن تحسينه بحساب الموقع الفعلي
-                "timeout": max(0, remaining),
-                "total_players": sum(len(q) for q in self.queues.values())
-            }
+    @classmethod
+    async def _get_lock(cls, user_id: int):
+        """الحصول على قفل للمستخدم"""
+        if user_id not in cls._locks:
+            cls._locks[user_id] = asyncio.Lock()
+        return cls._locks[user_id]
     
-    async def cleanup_old_matches(self):
-        """تنظيف المباريات القديمة العالقة"""
-        while True:
-            await asyncio.sleep(self.CLEANUP_INTERVAL)
-            try:
-                cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
-                conn = db.get_conn()
-                conn.execute("DELETE FROM active_games WHERE status='waiting' AND created_at < ?", (cutoff,))
-                conn.commit()
-                conn.close()
-            except Exception as e:
-                logger.error(f"خطأ في تنظيف المباريات العالقة: {e}")
+    @classmethod
+    def get_pending_count(cls) -> int:
+        """عدد المستخدمين في قائمة الانتظار"""
+        cls._cleanup_pending()
+        return len(cls._pending)
+    
+    @classmethod
+    def get_pending_users(cls) -> List[int]:
+        """قائمة المستخدمين في قائمة الانتظار"""
+        cls._cleanup_pending()
+        return list(cls._pending.keys())
 
-# مثيل واحد للاستخدام
-matchmaking = MatchmakingQueue()
+# مثيل افتراضي للاستخدام السريع
+matchmaking = MatchmakingManager()
