@@ -9,11 +9,7 @@ import state
 import keyboards
 import game_logic
 import utils
-from core.game_engine import get_result, bot_choice, calculate_winner
-from core.tournament_manager import (
-    get_tournament, update_tournament, get_bracket, save_bracket,
-    get_match_data, save_match_data, advance_round
-)
+from core.game_engine import get_result, bot_choice
 
 # ========== دوال الألعاب الأساسية ==========
 async def solo_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -95,31 +91,41 @@ async def process_random_pick(update, context, move, game_id):
     else:
         await query.edit_message_text("تم تسجيل حركتك، بانتظار الخصم...")
 
-# ========== دوال البطولة ==========
+# ========== دوال البطولة (معدلة) ==========
 async def process_tournament_pick(update, context, move, tour_id, match_index):
     query = update.callback_query
     user = query.from_user
 
-    tour = get_tournament(tour_id)
+    tour = db.get_tournament(tour_id)
     if not tour:
+        await query.answer("❌ البطولة غير موجودة!")
         return
 
-    bracket = get_bracket(tour_id)
-    if not bracket:
-        return
+    # ✅ bracket يقرأ كـ dict
+    try:
+        bracket = json.loads(tour.get("bracket", "{}"))
+        if not isinstance(bracket, dict):
+            bracket = {}
+    except:
+        bracket = {}
 
-    current_round = tour["current_round"]
+    current_round = tour.get("current_round", 1)
     round_key = f"round{current_round}"
     matches = bracket.get(round_key, [])
+    
     if match_index >= len(matches):
+        await query.answer("❌ خطأ في المباراة!")
         return
 
     match = matches[match_index]
-    match_data = get_match_data(tour_id)
+    
+    # قراءة match_data
+    match_data = json.loads(tour.get("match_data", "{}"))
     match_data[str(match_index)] = match_data.get(str(match_index), {})
     match_data[str(match_index)][str(user.id)] = move
-    save_match_data(tour_id, match_data)
+    db.update_tournament(tour_id, match_data=json.dumps(match_data))
 
+    # التحقق من اكتمال الحركات
     if str(match["p1"]) in match_data[str(match_index)] and str(match["p2"]) in match_data[str(match_index)]:
         m1 = match_data[str(match_index)][str(match["p1"])]
         m2 = match_data[str(match_index)][str(match["p2"])]
@@ -127,24 +133,35 @@ async def process_tournament_pick(update, context, move, tour_id, match_index):
         winner = match["p1"] if res == "win" else match["p2"] if res == "loss" else None
         match["winner"] = winner
         bracket[round_key][match_index] = match
-        save_bracket(tour_id, bracket)
+        db.update_tournament(tour_id, bracket=json.dumps(bracket))
 
-        new_round, new_bracket = advance_round(tour_id, current_round, bracket)
-        if new_round == "finished":
-            update_tournament(tour_id, status="finished")
+        # حساب الفائزين وتحديد الدور التالي
+        if current_round == 1:
+            winners = [m["winner"] for m in bracket.get("round1", []) if m.get("winner") is not None]
+            if len(winners) == 4:
+                bracket["round2"] = [
+                    {"p1": winners[0], "p2": winners[1], "winner": None},
+                    {"p1": winners[2], "p2": winners[3], "winner": None}
+                ]
+                db.update_tournament(tour_id, bracket=json.dumps(bracket), current_round=2)
+                for i, m in enumerate(bracket["round2"]):
+                    await context.bot.send_message(m["p1"], f"🏆 نصف النهائي! اختر حركتك:", reply_markup=keyboards.tournament_choice_buttons(tour_id, i))
+                    await context.bot.send_message(m["p2"], f"🏆 نصف النهائي! اختر حركتك:", reply_markup=keyboards.tournament_choice_buttons(tour_id, i))
+        elif current_round == 2:
+            winners = [m["winner"] for m in bracket.get("round2", []) if m.get("winner") is not None]
+            if len(winners) == 2:
+                bracket["final"] = [{"p1": winners[0], "p2": winners[1], "winner": None}]
+                db.update_tournament(tour_id, bracket=json.dumps(bracket), current_round=3)
+                for i, m in enumerate(bracket["final"]):
+                    await context.bot.send_message(m["p1"], f"🏆 النهائي! اختر حركتك:", reply_markup=keyboards.tournament_choice_buttons(tour_id, i))
+                    await context.bot.send_message(m["p2"], f"🏆 النهائي! اختر حركتك:", reply_markup=keyboards.tournament_choice_buttons(tour_id, i))
+        elif current_round == 3:
             final_winner = match["winner"]
             if final_winner:
                 user_data = db.get_user(final_winner)
                 db.update_user(final_winner, tournament_wins=user_data.get("tournament_wins", 0) + 1, points=user_data["points"] + 200)
                 await context.bot.send_message(final_winner, "🎉 أنت بطل البطولة! ربحت 200 نقطة.")
-        else:
-            save_bracket(tour_id, new_bracket)
-            update_tournament(tour_id, current_round=new_round)
-            next_round_key = f"round{new_round}"
-            next_matches = new_bracket.get(next_round_key, [])
-            for i, m in enumerate(next_matches):
-                await context.bot.send_message(m["p1"], f"🏆 الدور القادم! اختر حركتك:", reply_markup=keyboards.tournament_choice_buttons(tour_id, i))
-                await context.bot.send_message(m["p2"], f"🏆 الدور القادم! اختر حركتك:", reply_markup=keyboards.tournament_choice_buttons(tour_id, i))
+            db.update_tournament(tour_id, status="finished")
 
     await query.edit_message_text("تم تسجيل حركتك.")
 
