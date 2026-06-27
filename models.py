@@ -7,7 +7,7 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
-    # ========== جميع الجداول ==========
+    # ========== جدول المستخدمين ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -47,6 +47,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول العشائر ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS clans (
             clan_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,6 +59,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول المهام ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
             task_id TEXT PRIMARY KEY,
@@ -66,6 +68,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول المتجر ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS shop (
             item_id TEXT PRIMARY KEY,
@@ -75,6 +78,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول التصنيف ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS ratings (
             user_id INTEGER PRIMARY KEY,
@@ -82,7 +86,7 @@ def init_db():
         )
     """)
 
-    # ✅ إضافة match_data لجدول tournaments
+    # ========== جدول البطولات (مع match_data) ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS tournaments (
             tour_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,6 +100,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول الإنجازات ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS achievements (
             ach_id TEXT PRIMARY KEY,
@@ -107,6 +112,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول الأصدقاء ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS friends (
             user_id INTEGER,
@@ -124,6 +130,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول تحديات المجموعة ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS group_challenges (
             challenge_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -134,6 +141,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول الألقاب والثيمات ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS titles_shop (
             title_id TEXT PRIMARY KEY,
@@ -150,6 +158,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول الأحداث ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS events (
             event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -160,6 +169,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول حروب العشائر ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS clan_wars (
             war_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -173,6 +183,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول المباريات المعلقة (مع created_at) ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS pending_matches (
             user_id INTEGER PRIMARY KEY,
@@ -192,6 +203,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول المكافآت اليومية ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS daily_claims (
             user_id INTEGER PRIMARY KEY,
@@ -200,6 +212,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول Battle Pass ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS battle_pass (
             user_id INTEGER PRIMARY KEY,
@@ -210,6 +223,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول الإطارات ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS user_frames (
             user_id INTEGER PRIMARY KEY,
@@ -218,6 +232,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول السوق ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS market_listings (
             listing_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -230,6 +245,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول خزينة العشيرة ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS clan_treasury (
             clan_name TEXT PRIMARY KEY,
@@ -239,6 +255,7 @@ def init_db():
         )
     """)
 
+    # ========== جداول موسم حرب العشائر ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS clan_war_season (
             season_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -258,6 +275,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول غرف المشاهدة ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS spectator_rooms (
             room_id TEXT PRIMARY KEY,
@@ -270,6 +288,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول الموسم ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS season_info (
             season_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -291,6 +310,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول الزعيم العالمي ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS world_boss (
             boss_id INTEGER PRIMARY KEY DEFAULT 1,
@@ -312,6 +332,7 @@ def init_db():
         )
     """)
 
+    # ========== جدول قدرات اللاعبين ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS user_abilities (
             user_id INTEGER PRIMARY KEY,
@@ -324,6 +345,7 @@ def init_db():
         )
     """)
 
+    # ========== جداول المعارك الجماعية ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS mass_battle (
             battle_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -342,6 +364,7 @@ def init_db():
         )
     """)
 
+    # ========== جداول معارك الفرق ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS team_battles (
             battle_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -363,6 +386,7 @@ def init_db():
         )
     """)
 
+    # ========== جداول القناة ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS channel_loop_state (
             chat_id INTEGER PRIMARY KEY,
@@ -398,7 +422,7 @@ def init_db():
         )
     """)
 
-    # ✅ إضافة عمود last_updated لـ channel_user_points
+    # ========== جدول نقاط القناة (مع last_updated) ==========
     c.execute("""
         CREATE TABLE IF NOT EXISTS channel_user_points (
             chat_id INTEGER,
