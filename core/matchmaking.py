@@ -1,211 +1,124 @@
 import asyncio
 import logging
-import json
-from datetime import datetime, timedelta
+import time
+from typing import Optional, Dict, List, Tuple
 import db
 import state
 
 logger = logging.getLogger(__name__)
 
-class MatchmakingManager:
-    """نظام المطابقة المتقدم – قائمة انتظار، إلغاء تلقائي، إعادة محاولة"""
+class MatchmakingQueue:
+    """نظام مطابقة متقدم مع قوائم انتظار وإلغاء تلقائي"""
     
     def __init__(self):
-        self.queues = {}  # chat_id -> قائمة انتظار اللاعبين
-        self.matches = {}  # match_id -> بيانات المباراة
-        self.timeout = 30  # ثانية قبل إلغاء المباراة
-        self.max_players = 2  # عدد اللاعبين في المباراة
-        
-    async def join_queue(self, user_id: int, chat_id: int, game_type: str = "random"):
-        """انضمام لاعب إلى قائمة الانتظار"""
-        async with state.group_session_lock:
-            if chat_id not in self.queues:
-                self.queues[chat_id] = []
-            
-            queue = self.queues[chat_id]
-            # التحقق من أن اللاعب ليس في القائمة بالفعل
-            if user_id in queue:
-                return None
-            
-            # إضافة اللاعب
-            queue.append({
-                "user_id": user_id,
-                "joined_at": datetime.now().isoformat(),
-                "game_type": game_type
-            })
-            
-            # محاولة المطابقة
-            match = await self._try_match(chat_id)
-            if match:
-                return match
-            return {"status": "waiting", "position": len(queue)}
+        self.queues = {}  # game_type -> list of user_ids
+        self.match_timeouts = {}  # user_id -> timestamp
+        self.lock = asyncio.Lock()
+        self.TIMEOUT_SECONDS = 30
+        self.CLEANUP_INTERVAL = 10
     
-    async def _try_match(self, chat_id: int):
-        """محاولة مطابقة لاعبين"""
-        queue = self.queues.get(chat_id, [])
-        if len(queue) < 2:
-            return None
-        
-        # إزالة اللاعبين الذين انتهت مدة انتظارهم
-        now = datetime.now()
-        expired = []
-        for i, player in enumerate(queue):
-            joined = datetime.fromisoformat(player["joined_at"])
-            if (now - joined).total_seconds() > self.timeout * 2:
-                expired.append(i)
-        
-        for i in reversed(expired):
-            del queue[i]
-        
-        if len(queue) < 2:
-            return None
-        
-        # أخذ أول لاعبين
-        player1 = queue.pop(0)
-        player2 = queue.pop(0)
-        
-        # إنشاء مباراة
-        match_id = f"match_{chat_id}_{player1['user_id']}_{player2['user_id']}_{int(datetime.now().timestamp())}"
-        
-        # حفظ في قاعدة البيانات
-        state.start_solo_game(player1['user_id'])  # إنشاء game في state
-        
-        match_data = {
-            "match_id": match_id,
-            "chat_id": chat_id,
-            "player1": player1['user_id'],
-            "player2": player2['user_id'],
-            "status": "active",
-            "created_at": datetime.now().isoformat(),
-            "game_type": player1['game_type'],
-            "moves": {}
-        }
-        
-        self.matches[match_id] = match_data
-        return match_data
-    
-    async def submit_move(self, match_id: str, user_id: int, move: str):
-        """تسجيل حركة لاعب في المباراة"""
-        match = self.matches.get(match_id)
-        if not match:
-            return {"error": "المباراة غير موجودة"}
-        
-        if match["status"] != "active":
-            return {"error": "المباراة انتهت"}
-        
-        if user_id not in [match["player1"], match["player2"]]:
-            return {"error": "أنت لست في هذه المباراة"}
-        
-        # تسجيل الحركة
-        match["moves"][str(user_id)] = move
-        
-        # التحقق من اكتمال الحركات
-        if str(match["player1"]) in match["moves"] and str(match["player2"]) in match["moves"]:
-            # حساب النتيجة
-            from core.game_engine import get_result
-            m1 = match["moves"][str(match["player1"])]
-            m2 = match["moves"][str(match["player2"])]
-            result = get_result(m1, m2)
+    async def add_player(self, user_id: int, game_type: str = "random") -> Tuple[bool, Optional[int]]:
+        """
+        إضافة لاعب إلى قائمة الانتظار
+        Returns: (تمت المطابقة, opponent_id أو None)
+        """
+        async with self.lock:
+            # التحقق من وجود اللاعب بالفعل في القائمة
+            if user_id in self.match_timeouts:
+                return False, None
             
-            # تحديث النتيجة
-            if result == "win":
-                winner = match["player1"]
-            elif result == "loss":
-                winner = match["player2"]
+            # إضافة اللاعب لقائمة الانتظار
+            if game_type not in self.queues:
+                self.queues[game_type] = []
+            
+            # البحث عن خصم
+            queue = self.queues[game_type]
+            if queue:
+                opponent_id = queue.pop(0)
+                # إنشاء اللعبة
+                game_id = await self._create_match(user_id, opponent_id, game_type)
+                if game_id:
+                    # إزالة التايم أوت
+                    self.match_timeouts.pop(user_id, None)
+                    self.match_timeouts.pop(opponent_id, None)
+                    return True, opponent_id
+                else:
+                    # فشل إنشاء اللعبة، إعادة الخصم للقائمة
+                    queue.append(opponent_id)
+                    return False, None
             else:
-                winner = None
-            
-            match["status"] = "finished"
-            match["result"] = result
-            match["winner"] = winner
-            
+                # إضافة للقائمة
+                queue.append(user_id)
+                self.match_timeouts[user_id] = time.time()
+                # جدولة الإلغاء التلقائي
+                asyncio.create_task(self._auto_cancel(user_id, game_type))
+                return False, None
+    
+    async def _create_match(self, user1: int, user2: int, game_type: str) -> Optional[str]:
+        """إنشاء مباراة جديدة بين لاعبين"""
+        try:
+            game_id = f"{game_type}_{user1}_{user2}_{int(time.time())}"
+            conn = db.get_conn()
+            conn.execute(
+                "INSERT INTO active_games (game_id, player1, player2, type, status, data) VALUES (?,?,?,?,?,?)",
+                (game_id, user1, user2, game_type, "waiting", "{}")
+            )
+            conn.commit()
+            conn.close()
+            return game_id
+        except Exception as e:
+            logger.error(f"فشل إنشاء المباراة: {e}")
+            return None
+    
+    async def _auto_cancel(self, user_id: int, game_type: str):
+        """إلغاء تلقائي للاعب إذا انتهى الوقت"""
+        await asyncio.sleep(self.TIMEOUT_SECONDS)
+        async with self.lock:
+            if user_id in self.match_timeouts:
+                # حذف من قائمة الانتظار
+                if game_type in self.queues:
+                    queue = self.queues[game_type]
+                    if user_id in queue:
+                        queue.remove(user_id)
+                self.match_timeouts.pop(user_id, None)
+                # إخطار المستخدم (سيتم التعامل معه في الـ handler)
+    
+    async def cancel_matchmaking(self, user_id: int) -> bool:
+        """إلغاء المطابقة للاعب"""
+        async with self.lock:
+            if user_id not in self.match_timeouts:
+                return False
+            # إزالة من جميع القوائم
+            for queue in self.queues.values():
+                if user_id in queue:
+                    queue.remove(user_id)
+            self.match_timeouts.pop(user_id, None)
+            return True
+    
+    async def get_queue_status(self, user_id: int) -> Optional[Dict]:
+        """الحصول على حالة اللاعب في قائمة الانتظار"""
+        async with self.lock:
+            if user_id not in self.match_timeouts:
+                return None
+            remaining = int(self.TIMEOUT_SECONDS - (time.time() - self.match_timeouts[user_id]))
             return {
-                "status": "finished",
-                "result": result,
-                "winner": winner,
-                "player1_move": m1,
-                "player2_move": m2
+                "position": 0,  # يمكن تحسينه بحساب الموقع الفعلي
+                "timeout": max(0, remaining),
+                "total_players": sum(len(q) for q in self.queues.values())
             }
-        
-        return {"status": "waiting", "message": "بانتظار حركة الخصم"}
     
-    async def cancel_match(self, match_id: str, user_id: int):
-        """إلغاء مباراة من قبل لاعب"""
-        match = self.matches.get(match_id)
-        if not match:
-            return {"error": "المباراة غير موجودة"}
-        
-        if user_id not in [match["player1"], match["player2"]]:
-            return {"error": "أنت لست في هذه المباراة"}
-        
-        match["status"] = "cancelled"
-        # إرجاع اللاعبين إلى قائمة الانتظار
-        chat_id = match["chat_id"]
-        async with state.group_session_lock:
-            if chat_id not in self.queues:
-                self.queues[chat_id] = []
-            # إضافة اللاعبين مرة أخرى
-            self.queues[chat_id].append({
-                "user_id": match["player1"],
-                "joined_at": datetime.now().isoformat(),
-                "game_type": match["game_type"]
-            })
-            self.queues[chat_id].append({
-                "user_id": match["player2"],
-                "joined_at": datetime.now().isoformat(),
-                "game_type": match["game_type"]
-            })
-        
-        return {"status": "cancelled"}
-    
-    async def get_queue_status(self, chat_id: int):
-        """الحصول على حالة قائمة الانتظار"""
-        queue = self.queues.get(chat_id, [])
-        return {
-            "chat_id": chat_id,
-            "players": [p["user_id"] for p in queue],
-            "count": len(queue),
-            "max_players": self.max_players
-        }
-    
-    async def get_active_matches(self, chat_id: int = None):
-        """الحصول على المباريات النشطة"""
-        if chat_id:
-            return [m for m in self.matches.values() if m["chat_id"] == chat_id and m["status"] == "active"]
-        return [m for m in self.matches.values() if m["status"] == "active"]
-    
-    async def cleanup_expired(self):
-        """تنظيف المباريات المنتهية وقوائم الانتظار القديمة"""
-        now = datetime.now()
-        
-        # تنظيف المباريات المعلقة
-        expired_matches = []
-        for mid, match in self.matches.items():
-            if match["status"] == "active":
-                created = datetime.fromisoformat(match["created_at"])
-                if (now - created).total_seconds() > self.timeout * 2:
-                    expired_matches.append(mid)
-        
-        for mid in expired_matches:
-            del self.matches[mid]
-        
-        # تنظيف قوائم الانتظار القديمة
-        for chat_id, queue in self.queues.items():
-            expired = []
-            for i, player in enumerate(queue):
-                joined = datetime.fromisoformat(player["joined_at"])
-                if (now - joined).total_seconds() > self.timeout * 3:
-                    expired.append(i)
-            for i in reversed(expired):
-                del queue[i]
-            if not queue:
-                del self.queues[chat_id]
+    async def cleanup_old_matches(self):
+        """تنظيف المباريات القديمة العالقة"""
+        while True:
+            await asyncio.sleep(self.CLEANUP_INTERVAL)
+            try:
+                cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
+                conn = db.get_conn()
+                conn.execute("DELETE FROM active_games WHERE status='waiting' AND created_at < ?", (cutoff,))
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                logger.error(f"خطأ في تنظيف المباريات العالقة: {e}")
 
 # مثيل واحد للاستخدام
-matchmaking = MatchmakingManager()
-
-# مهمة خلفية للتنظيف
-async def run_matchmaking_cleanup():
-    while True:
-        await asyncio.sleep(60)  # كل دقيقة
-        await matchmaking.cleanup_expired()
+matchmaking = MatchmakingQueue()
