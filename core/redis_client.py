@@ -1,7 +1,10 @@
 import json
 import redis
+import logging
 from typing import Optional, Any
 import config.settings as settings
+
+logger = logging.getLogger(__name__)
 
 class RedisClient:
     """عميل Redis للتخزين المؤقت"""
@@ -23,16 +26,16 @@ class RedisClient:
                     socket_connect_timeout=5,
                     socket_timeout=5
                 )
-                self._client.ping()  # اختبار الاتصال
+                self._client.ping()
+                logger.info("✅ Redis connected successfully")
             except Exception as e:
                 self._client = None
-                print(f"⚠️ Redis connection failed: {e}")
+                logger.warning(f"⚠️ Redis connection failed: {e}")
 
     def is_connected(self) -> bool:
         return self._client is not None
 
     def get(self, key: str) -> Optional[Any]:
-        """جلب قيمة من Redis"""
         if not self.is_connected():
             return None
         try:
@@ -40,21 +43,21 @@ class RedisClient:
             if value:
                 return json.loads(value)
             return None
-        except:
+        except Exception as e:
+            logger.debug(f"Redis get error: {e}")
             return None
 
     def set(self, key: str, value: Any, ttl: int = 3600) -> bool:
-        """تخزين قيمة في Redis مع TTL (ثواني)"""
         if not self.is_connected():
             return False
         try:
             self._client.setex(key, ttl, json.dumps(value))
             return True
-        except:
+        except Exception as e:
+            logger.debug(f"Redis set error: {e}")
             return False
 
     def delete(self, key: str) -> bool:
-        """حذف مفتاح من Redis"""
         if not self.is_connected():
             return False
         try:
@@ -64,7 +67,6 @@ class RedisClient:
             return False
 
     def clear_pattern(self, pattern: str) -> int:
-        """حذف جميع المفاتيح التي تطابق النمط"""
         if not self.is_connected():
             return 0
         try:
@@ -75,5 +77,27 @@ class RedisClient:
         except:
             return 0
 
-# مثيل واحد للاستخدام في جميع أنحاء البوت
+    def increment(self, key: str, amount: int = 1) -> Optional[int]:
+        if not self.is_connected():
+            return None
+        try:
+            return self._client.incr(key, amount)
+        except:
+            return None
+
+    def expire(self, key: str, ttl: int) -> bool:
+        if not self.is_connected():
+            return False
+        try:
+            return self._client.expire(key, ttl)
+        except:
+            return False
+
+    def set_json(self, key: str, value: Any, ttl: int = 3600) -> bool:
+        return self.set(key, value, ttl)
+
+    def get_json(self, key: str) -> Optional[Any]:
+        return self.get(key)
+
+# مثيل واحد للاستخدام
 redis_client = RedisClient()
