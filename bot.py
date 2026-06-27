@@ -55,6 +55,10 @@ from handlers.commands.admin_commands import (
 
 from tasks import run_cleanup, run_auto_drops
 
+# ==================== الألعاب الجديدة ====================
+from games.guess_number import GuessNumberGame
+from games.quiz import QuizGame
+
 # ==================== إعدادات Logging ====================
 try:
     from utils.logging_utils import logger
@@ -106,14 +110,14 @@ else:
 
 # ==================== معالج الرسائل النصية ====================
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج الرسائل النصية (للبث، إدخال البيانات، المنشن)"""
+    """معالج الرسائل النصية (للبث، إدخال البيانات، المنشن، ألعاب التخمين)"""
     user = update.effective_user
     msg = update.message.text.strip() if update.message.text else ""
     chat_type = update.effective_chat.type
     bot_username = context.bot.username.lower()
     entities = update.message.entities or update.message.caption_entities
 
-    # التعامل مع المنشن في المجموعات
+    # ===== التعامل مع المنشن في المجموعات =====
     if entities and chat_type in ["group", "supergroup"]:
         for ent in entities:
             if ent.type == MessageEntity.MENTION:
@@ -126,9 +130,14 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await handle_group_mention(update, context, update.effective_chat.id)
                     return
 
-    # في الخاص فقط
+    # ===== في الخاص فقط =====
     if chat_type == "private":
-        # حالة انتظار البث
+        # ===== لعبة خمن الرقم =====
+        if context.user_data.get("guess_game_active"):
+            await GuessNumberGame.handle_guess(update, context)
+            return
+
+        # ===== حالة انتظار البث =====
         if context.user_data.get("awaiting_broadcast"):
             broadcast_msg = update.message.text
             success, fail = 0, 0
@@ -143,7 +152,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["awaiting_broadcast"] = False
             return
 
-        # حالة انتظار تعديل النقاط (إدارة)
+        # ===== حالة انتظار تعديل النقاط (إدارة) =====
         if context.user_data.get("awaiting_set_points"):
             try:
                 parts = update.message.text.split()
@@ -160,22 +169,22 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["awaiting_set_points"] = False
             return
 
-        # حالة انتظار بدء قناة (إدارة)
+        # ===== حالة انتظار بدء قناة (إدارة) =====
         if context.user_data.get("awaiting_start_channel"):
             await channel_h.process_start_channel_text(update, context)
             return
 
-        # حالة انتظار إيقاف قناة (إدارة)
+        # ===== حالة انتظار إيقاف قناة (إدارة) =====
         if context.user_data.get("awaiting_stop_channel"):
             await channel_h.process_stop_channel_text(update, context)
             return
 
-        # منع النصوص الطويلة
+        # ===== منع النصوص الطويلة =====
         if len(msg) > 100:
             await update.message.reply_text("النص طويل جداً.")
             return
 
-        # حالات انتظار إدخال بيانات من المستخدم
+        # ===== حالات انتظار إدخال بيانات من المستخدم =====
         if context.user_data.get("awaiting_friend_username"):
             await social_h.process_friend_username(update, context)
         elif context.user_data.get("awaiting_clan_name"):
@@ -413,7 +422,7 @@ async def teambattle_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     conn.close()
 
-# ==================== عجلة الحظ (معدلة) ====================
+# ==================== عجلة الحظ ====================
 async def wheel_spin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
@@ -508,6 +517,13 @@ def main():
     # أمر matchmaking (إذا كان متاحاً)
     if matchmaking_status:
         app.add_handler(CommandHandler("matchmaking", matchmaking_status))
+
+    # -------------------- الألعاب الجديدة --------------------
+    app.add_handler(CallbackQueryHandler(GuessNumberGame.start, pattern="^guess_number$"))
+    app.add_handler(CallbackQueryHandler(GuessNumberGame.again, pattern="^guess_number_again$"))
+    app.add_handler(CallbackQueryHandler(QuizGame.start, pattern="^quiz$"))
+    app.add_handler(CallbackQueryHandler(QuizGame.again, pattern="^quiz_again$"))
+    app.add_handler(CallbackQueryHandler(QuizGame.handle_answer, pattern="^quiz_answer_"))
 
     # -------------------- معالجات الأزرار --------------------
     # حركات القناة
