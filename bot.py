@@ -183,11 +183,9 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=keyboards.channel_main_menu(chat_id)
     )
 
-# ==================== أوامر الإدارة (مباشرة في bot.py) ====================
+# ==================== أوامر الإدارة ====================
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """لوحة التحكم للمؤسس - تستخدم config.FOUNDER_ID مباشرة"""
     user = update.effective_user
-    # ✅ التحقق المباشر باستخدام config.FOUNDER_ID
     if user.id != config.FOUNDER_ID:
         await update.message.reply_text(f"❌ غير مصرح لك. معرفك: {user.id}")
         return
@@ -343,6 +341,55 @@ async def teambattle_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await context.bot.send_message(chat_id, f"نتيجة المعركة: {'🔴 فاز الفريق الأحمر' if winner_team=='red' else '🔵 فاز الفريق الأزرق' if winner_team=='blue' else 'تعادل'}")
     conn.close()
 
+# ==================== عجلة الحظ (معدلة – إصلاح stale-read) ====================
+async def wheel_spin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    
+    # ✅ قراءة البيانات مرة واحدة فقط
+    u = db.get_user(user.id)
+    if u.get("gems", 0) < config.WHEEL_COST:
+        await query.answer("تحتاج 5 جواهر لتدوير العجلة!")
+        return
+    
+    # ✅ خصم الجواهر وحفظ القيمة الجديدة
+    current_gems = u["gems"] - config.WHEEL_COST
+    db.update_user(user.id, gems=current_gems)
+    
+    reward_type, value = db.spin_wheel(user.id)
+    
+    if reward_type == "points":
+        current_points = db.get_user(user.id)["points"]
+        db.update_user(user.id, points=current_points + value)
+        msg = f"🎉 ربحت {value} نقطة!"
+    elif reward_type == "gems":
+        # ✅ استخدام current_gems بدلاً من u["gems"] القديمة
+        db.update_user(user.id, gems=current_gems + value)
+        msg = f"🎉 ربحت {value} جوهرة!"
+    elif reward_type == "title":
+        db.update_user(user.id, title=value)
+        msg = f"🎉 حصلت على لقب '{value}'!"
+    elif reward_type == "theme":
+        db.update_user(user.id, theme=value)
+        msg = f"🎉 حصلت على ثيم جديد!"
+    elif reward_type == "treasure_box":
+        sub = random.choice(config.TREASURE_REWARDS)
+        if sub[0] == "points":
+            current_points = db.get_user(user.id)["points"]
+            db.update_user(user.id, points=current_points + sub[1])
+            msg = f"🎁 صندوق كنز: +{sub[1]} نقطة"
+        elif sub[0] == "gems":
+            current_gems_after = db.get_user(user.id)["gems"]
+            db.update_user(user.id, gems=current_gems_after + sub[1])
+            msg = f"🎁 صندوق كنز: +{sub[1]} جوهرة"
+        else:
+            msg = "🎁 صندوق كنز!"
+    else:
+        msg = "🎡 حظ سعيد!"
+    
+    db.add_battle_pass_xp(user.id, 5)
+    await query.edit_message_text(f"🎡 العجلة توقفت عند: {msg}", reply_markup=keyboards.wheel_button())
+
 # ==================== تشغيل البوت ====================
 def main():
     if not config.BOT_TOKEN or config.BOT_TOKEN == "":
@@ -374,7 +421,7 @@ def main():
 
     # معالجات الأزرار
     app.add_handler(CallbackQueryHandler(channel_h.handle_move, pattern="^move_"))
-    app.add_handler(CallbackQueryHandler(navigation_handler, pattern="^(back_main|delete_message|language|profile)$"))
+    app.add_handler(CallbackQueryHandler(navigation_handler, pattern="^(back_main|delete_message|language|profile|play_now|more|how_to_play|support|rate_bot|select_type|browse_sections|create_room|search_games|search_room|channel_|manage_channels|change_question_type|create_game_now|enable_auto_play|toggle_auto_play|broadcast_game|show_question_type)$"))
     app.add_handler(CallbackQueryHandler(
         game_handler,
         pattern="^(game|solo|random|friend|channel|spock|story|group_|pick_|spockpick_|open_|join_tournament_|accept_challenge_|reject_challenge_|spectate_|play_|mode_|rematch_)"
