@@ -101,6 +101,15 @@ class MatchmakingManager:
         """قائمة المستخدمين في قائمة الانتظار"""
         cls._cleanup_pending()
         return list(cls._pending.keys())
+    
+    @classmethod
+    async def cancel_matchmaking(cls, user_id: int) -> bool:
+        """إلغاء المطابقة للمستخدم"""
+        async with cls._get_lock(user_id):
+            if user_id in cls._pending:
+                cls._pending.pop(user_id, None)
+                return True
+            return False
 
 # مثيل افتراضي للاستخدام السريع
 matchmaking = MatchmakingManager()
