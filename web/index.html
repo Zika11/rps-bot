@@ -1,13 +1,357 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RPS Game Hub</title>
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RPS Mini App</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--tg-theme-bg-color, #1a1a2e);
+            color: var(--tg-theme-text-color, #eee);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+        .container { width: 100%; max-width: 400px; text-align: center; }
+        h1 { font-size: 2rem; margin-bottom: 0.5rem; color: var(--tg-theme-button-color, #e94560); }
+        .status { background: var(--tg-theme-secondary-bg-color, #16213e); border-radius: 12px; padding: 1rem; margin: 1rem 0; font-size: 1rem; }
+        .moves { display: flex; gap: 1rem; justify-content: center; margin: 1.5rem 0; }
+        .move-btn {
+            flex: 1; padding: 1.5rem; font-size: 2.5rem;
+            border: 2px solid var(--tg-theme-button-color, #e94560);
+            border-radius: 16px; background: transparent;
+            color: var(--tg-theme-button-color, #e94560);
+            cursor: pointer; transition: all 0.2s;
+        }
+        .move-btn:active { background: var(--tg-theme-button-color, #e94560); color: white; transform: scale(0.95); }
+        .move-btn.selected { background: var(--tg-theme-button-color, #e94560); color: white; }
+        .move-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .confirm-btn {
+            width: 100%; padding: 1rem; font-size: 1.2rem; font-weight: bold;
+            border: none; border-radius: 12px;
+            background: var(--tg-theme-button-color, #e94560);
+            color: var(--tg-theme-button-text-color, white);
+            cursor: pointer; margin-top: 0.5rem;
+        }
+        .confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .message { margin-top: 1rem; padding: 0.5rem; border-radius: 8px; background: var(--tg-theme-hint-color, #0f3460); }
+        .leaderboard { list-style: none; margin-top: 1rem; }
+        .leaderboard li { padding: 0.5rem 1rem; background: #16213e; margin: 0.5rem 0; border-radius: 8px; display: flex; justify-content: space-between; }
+        .auth-container { text-align: center; padding: 2rem; }
+        .error { color: #e94560; margin: 1rem 0; }
+        .queue-status { background: #0f3460; border-radius: 8px; padding: 0.5rem; margin: 0.5rem 0; font-size: 0.9rem; }
+        .nav-buttons { display: flex; gap: 0.5rem; margin: 1rem 0; flex-wrap: wrap; justify-content: center; }
+        .nav-btn { padding: 0.5rem 1rem; border-radius: 8px; background: #0f3460; color: white; border: none; cursor: pointer; }
+        .nav-btn.active { background: #e94560; }
+        .game-mode { display: flex; gap: 0.5rem; margin: 0.5rem 0; flex-wrap: wrap; justify-content: center; }
+        .mode-btn { padding: 0.5rem 1rem; border-radius: 8px; background: #0f3460; color: white; border: 1px solid #e94560; cursor: pointer; }
+        .mode-btn.active { background: #e94560; }
+    </style>
 </head>
 <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <div class="container" id="app">
+        <h1>✊ ✋ ✌️</h1>
+        <p>حجر ورقة مقص</p>
+
+        <div id="auth-section">
+            <div id="loading-section">
+                <p>⏳ جاري التحقق...</p>
+            </div>
+            <div id="game-section" style="display: none;">
+                <!-- رأس المستخدم -->
+                <div id="user-header" style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; background: #0f3460; border-radius: 8px; margin-bottom: 1rem;">
+                    <span id="user-name">👤</span>
+                    <span id="user-score">⭐ 0</span>
+                    <span id="user-rating">🏅 0</span>
+                </div>
+
+                <!-- أزرار التنقل -->
+                <div class="nav-buttons">
+                    <button class="nav-btn active" onclick="showTab('play')">🎮 لعب</button>
+                    <button class="nav-btn" onclick="showTab('leaderboard')">🏆 تصنيف</button>
+                    <button class="nav-btn" onclick="showTab('queue')">🎯 قائمة الانتظار</button>
+                </div>
+
+                <!-- تبويب اللعب -->
+                <div id="tab-play">
+                    <div class="game-mode">
+                        <button class="mode-btn active" data-mode="bot" onclick="setGameMode('bot')">🤖 ضد البوت</button>
+                        <button class="mode-btn" data-mode="random" onclick="setGameMode('random')">🎲 عشوائي</button>
+                        <button class="mode-btn" data-mode="friend" onclick="setGameMode('friend')">👥 ضد صديق</button>
+                    </div>
+
+                    <div class="status" id="round-status">جاري التحميل...</div>
+                    <div class="queue-status" id="queue-status" style="display: none;">📊 قائمة الانتظار: 0 لاعب</div>
+
+                    <div class="moves">
+                        <button class="move-btn" onclick="selectMove('rock')">👊</button>
+                        <button class="move-btn" onclick="selectMove('paper')">✋</button>
+                        <button class="move-btn" onclick="selectMove('scissors')">✌️</button>
+                    </div>
+                    <button class="confirm-btn" id="confirm-btn" disabled onclick="submitVote()">تأكيد الاختيار</button>
+                    <div class="message" id="message"></div>
+                    <div id="result-area" style="display: none; margin-top: 1rem; padding: 1rem; background: #0f3460; border-radius: 8px;"></div>
+                </div>
+
+                <!-- تبويب التصنيف -->
+                <div id="tab-leaderboard" style="display: none;">
+                    <h3>🏆 أفضل 10 لاعبين</h3>
+                    <ul class="leaderboard" id="leaderboard-list"></ul>
+                    <button class="confirm-btn" onclick="loadLeaderboard()">🔄 تحديث</button>
+                </div>
+
+                <!-- تبويب قائمة الانتظار -->
+                <div id="tab-queue" style="display: none;">
+                    <h3>🎯 قائمة الانتظار</h3>
+                    <div id="queue-info">جاري التحميل...</div>
+                    <button class="confirm-btn" onclick="joinQueue()">🎲 انضم للقائمة</button>
+                    <button class="confirm-btn" style="background: #c23152; margin-top: 0.5rem;" onclick="leaveQueue()">🚪 اخرج من القائمة</button>
+                </div>
+            </div>
+
+            <div id="error-section" style="display: none;" class="error">
+                ⚠️ يرجى فتح التطبيق من داخل تيليجرام
+            </div>
+        </div>
+    </div>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+        const API_BASE = 'https://rps-bot-production-50cc.up.railway.app';
+        let tg = window.Telegram.WebApp;
+        let selectedMove = null;
+        let chatId = null;
+        let currentUser = null;
+        let currentMode = 'bot';
+        let currentTab = 'play';
+        let gameState = null;
+        let intervalId = null;
+
+        tg.ready();
+        tg.expand();
+
+        // استخراج chat_id
+        const params = new URLSearchParams(window.location.search);
+        chatId = params.get('chat');
+        if (!chatId && tg.initDataUnsafe?.start_param) {
+            chatId = tg.initDataUnsafe.start_param;
+        }
+
+        // التحقق التلقائي من المستخدم
+        async function autoLogin() {
+            const initData = tg.initData;
+            if (!initData) {
+                document.getElementById('loading-section').style.display = 'none';
+                document.getElementById('error-section').style.display = 'block';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/auth/telegram`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ initData })
+                });
+                const data = await response.json();
+                if (data.valid) {
+                    currentUser = tg.initDataUnsafe?.user;
+                    if (!currentUser) {
+                        throw new Error('No user data');
+                    }
+                    document.getElementById('loading-section').style.display = 'none';
+                    document.getElementById('game-section').style.display = 'block';
+                    updateUserHeader();
+                    loadRoundStatus();
+                    loadLeaderboard();
+                    // تحديث كل 3 ثواني
+                    intervalId = setInterval(() => {
+                        loadRoundStatus();
+                        updateQueueStatus();
+                    }, 3000);
+                } else {
+                    throw new Error('Invalid');
+                }
+            } catch (e) {
+                document.getElementById('loading-section').style.display = 'none';
+                document.getElementById('error-section').style.display = 'block';
+            }
+        }
+
+        function updateUserHeader() {
+            if (currentUser) {
+                document.getElementById('user-name').textContent = `👤 ${currentUser.first_name || 'User'}`;
+            }
+        }
+
+        async function loadRoundStatus() {
+            if (!chatId) {
+                document.getElementById('round-status').innerText = 'لم يتم تحديد قناة';
+                return;
+            }
+            try {
+                const res = await fetch(`${API_BASE}/round/${chatId}`);
+                const data = await res.json();
+                if (data.status === 'ACTIVE') {
+                    document.getElementById('round-status').innerHTML = 
+                        `✅ الجولة مفتوحة<br>👥 عدد المصوتين: ${data.players_count || 0}`;
+                    document.querySelectorAll('.move-btn').forEach(b => b.disabled = false);
+                } else {
+                    document.getElementById('round-status').innerText = 'لا توجد جولة نشطة حالياً';
+                    document.querySelectorAll('.move-btn').forEach(b => b.disabled = true);
+                }
+            } catch (e) {
+                document.getElementById('round-status').innerText = 'خطأ في تحميل الحالة';
+            }
+        }
+
+        async function updateQueueStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/matchmaking/queue/${chatId}`);
+                const data = await res.json();
+                if (data && data.count !== undefined) {
+                    document.getElementById('queue-status').style.display = 'block';
+                    document.getElementById('queue-status').innerHTML = 
+                        `📊 قائمة الانتظار: ${data.count} لاعب ${data.count > 0 ? '(في انتظار المطابقة)' : ''}`;
+                }
+            } catch (e) {
+                // تجاهل
+            }
+        }
+
+        async function loadLeaderboard() {
+            if (!chatId) return;
+            try {
+                const res = await fetch(`${API_BASE}/leaderboard/${chatId}`);
+                const data = await res.json();
+                const list = document.getElementById('leaderboard-list');
+                list.innerHTML = '';
+                if (data.length === 0) {
+                    list.innerHTML = '<li>لا توجد بيانات بعد</li>';
+                    return;
+                }
+                data.forEach((p, i) => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `<span>${i+1}. ${p.name}</span><span>${p.points} نقطة</span>`;
+                    list.appendChild(li);
+                });
+            } catch (e) {
+                console.error('Leaderboard error:', e);
+            }
+        }
+
+        function selectMove(move) {
+            selectedMove = move;
+            document.querySelectorAll('.move-btn').forEach(b => b.classList.remove('selected'));
+            document.querySelector(`.move-btn[onclick="selectMove('${move}')"]`).classList.add('selected');
+            document.getElementById('confirm-btn').disabled = false;
+            document.getElementById('message').innerText = '';
+        }
+
+        async function submitVote() {
+            if (!selectedMove || !chatId || !currentUser) return;
+            const userId = currentUser.id;
+            try {
+                const res = await fetch(`${API_BASE}/vote`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: parseInt(chatId), user_id: userId, move: selectedMove })
+                });
+                const data = await res.json();
+                if (data.status === 'vote registered') {
+                    document.getElementById('message').innerText = '✅ تم تسجيل تصويتك!';
+                    document.getElementById('message').style.color = '#4caf50';
+                    selectedMove = null;
+                    document.querySelectorAll('.move-btn').forEach(b => b.classList.remove('selected'));
+                    document.getElementById('confirm-btn').disabled = true;
+                    loadRoundStatus();
+                } else {
+                    document.getElementById('message').innerText = '❌ فشل التصويت';
+                    document.getElementById('message').style.color = '#e94560';
+                }
+            } catch (e) {
+                document.getElementById('message').innerText = '❌ خطأ في الاتصال';
+                document.getElementById('message').style.color = '#e94560';
+            }
+        }
+
+        function setGameMode(mode) {
+            currentMode = mode;
+            document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+            document.querySelector(`.mode-btn[data-mode="${mode}"]`).classList.add('active');
+            
+            if (mode === 'random') {
+                document.querySelector('.queue-status').style.display = 'block';
+                joinQueue();
+            } else {
+                document.querySelector('.queue-status').style.display = 'none';
+            }
+        }
+
+        async function joinQueue() {
+            if (!currentUser) return;
+            try {
+                const res = await fetch(`${API_BASE}/matchmaking/join`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        user_id: currentUser.id, 
+                        chat_id: parseInt(chatId),
+                        game_type: currentMode 
+                    })
+                });
+                const data = await res.json();
+                if (data.status === 'waiting') {
+                    document.getElementById('message').innerText = `⏳ انضممت للقائمة! موقعك: ${data.position || '...'}`;
+                    document.getElementById('message').style.color = '#ffc107';
+                } else if (data.match) {
+                    document.getElementById('message').innerText = '🎯 تم العثور على خصم! ابدأ اللعب!';
+                    document.getElementById('message').style.color = '#4caf50';
+                }
+            } catch (e) {
+                console.error('Join queue error:', e);
+            }
+        }
+
+        async function leaveQueue() {
+            if (!currentUser) return;
+            try {
+                const res = await fetch(`${API_BASE}/matchmaking/leave`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: currentUser.id, chat_id: parseInt(chatId) })
+                });
+                document.getElementById('message').innerText = '🚪 خرجت من قائمة الانتظار';
+                document.getElementById('message').style.color = '#e94560';
+            } catch (e) {
+                console.error('Leave queue error:', e);
+            }
+        }
+
+        function showTab(tab) {
+            currentTab = tab;
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            document.querySelector(`.nav-btn[onclick="showTab('${tab}')"]`).classList.add('active');
+            
+            document.getElementById('tab-play').style.display = tab === 'play' ? 'block' : 'none';
+            document.getElementById('tab-leaderboard').style.display = tab === 'leaderboard' ? 'block' : 'none';
+            document.getElementById('tab-queue').style.display = tab === 'queue' ? 'block' : 'none';
+            
+            if (tab === 'leaderboard') loadLeaderboard();
+            if (tab === 'queue') updateQueueStatus();
+        }
+
+        // بدء التحقق التلقائي
+        autoLogin();
+
+        // تنظيف الفاصل الزمني عند الإغلاق
+        window.addEventListener('beforeunload', () => {
+            if (intervalId) clearInterval(intervalId);
+        });
+    </script>
 </body>
 </html>
