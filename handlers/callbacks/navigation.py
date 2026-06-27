@@ -1,13 +1,14 @@
 import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import keyboards
 import db
+import state
 
 logger = logging.getLogger(__name__)
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج أزرار الملاحة الأساسية"""
+    """معالج أزرار الملاحة الأساسية + الأزرار الجديدة"""
     query = update.callback_query
     user = query.from_user
     data = query.data
@@ -15,25 +16,14 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ========== الملاحة الأساسية ==========
     if data == "back_main":
         u = db.get_user(user.id)
-        points = u.get("points", 0)
+        points = u.get("points", 0) if u else 0
         rating = db.get_user_rating(user.id) or 1000
         rank = "غير مصنف"
-        for low, high, name, icon in [
-            (0, 999, "برونز", "🥉"),
-            (1000, 1199, "فضة", "🥈"),
-            (1200, 1399, "ذهبي", "🥇"),
-            (1400, 1599, "بلاتينيوم", "🔮"),
-            (1600, 1799, "ماسي", "💎"),
-            (1800, 9999, "أسطورة", "👑")
-        ]:
+        for low, high, name, icon in db.RATING_TIERS:
             if low <= rating <= high:
                 rank = f"{icon} {name}"
                 break
-
-        text = f"مرحباً {user.first_name}\n\n"
-        text += f"اختر من القائمة لبدء التحدي\n"
-        text += f"نقاطك: {points:,} | تصنيفك: {rank}\n\n"
-
+        text = f"مرحباً {user.first_name}\n\nاختر من القائمة لبدء التحدي\nنقاطك: {points:,} | تصنيفك: {rank}\n\n"
         await query.edit_message_text(text, reply_markup=keyboards.main_menu())
         return True
 
@@ -53,7 +43,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await me_command(update, context)
         return True
 
-    # ========== القوائم الجديدة ==========
+    # ========== القائمة الرئيسية الجديدة ==========
     elif data == "play_now":
         await query.edit_message_text(
             "اختر وضع اللعب\nابدأ بتحديد نوع الأسئلة ثم اختر الوضع المناسب",
@@ -63,12 +53,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "more":
         await query.edit_message_text(
-            "المزيد\nخيارات إضافية:\n\nالوقت الحالي: " + datetime.now().strftime("%H:%M:%S"),
+            "المزيد\nخيارات إضافية:",
             reply_markup=keyboards.more_menu()
         )
         return True
 
-    # ========== خيارات المزيد ==========
     elif data == "how_to_play":
         await query.edit_message_text(
             "📖 **طريقة اللعب**\n\n"
@@ -101,12 +90,27 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return True
 
-    # ========== خيارات القناة ==========
+    # ========== اختيار القناة ==========
     elif data == "select_type":
-        channels = [
-            {"id": "z", "name": "Z"},
-            {"id": "be_inspired", "name": "BE INSPIRED"}
-        ]
+        # جلب القنوات النشطة من الحالة
+        async with state.channel_settings_lock:
+            channel_ids = list(state.channel_settings.keys())
+        
+        channels = []
+        for cid in channel_ids:
+            try:
+                chat = await context.bot.get_chat(cid)
+                channels.append({"id": str(cid), "name": chat.title or f"قناة {cid}"})
+            except:
+                channels.append({"id": str(cid), "name": f"قناة {cid}"})
+        
+        # إذا لم توجد قنوات، أضف قنوات افتراضية
+        if not channels:
+            channels = [
+                {"id": "z", "name": "Z"},
+                {"id": "be_inspired", "name": "BE INSPIRED"}
+            ]
+        
         await query.edit_message_text(
             "تم اختيار نوع الأسئلة:\n"
             "اختر القناة التي تريد إنشاء اللعبة فيها:\n"
@@ -147,34 +151,80 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return True
 
+    # ========== خيارات القناة ==========
     elif data.startswith("channel_"):
         channel_id = data.split("_")[1]
-        channel_name = channel_id.upper()
+        try:
+            chat = await context.bot.get_chat(int(channel_id))
+            channel_name = chat.title or f"قناة {channel_id}"
+        except:
+            channel_name = channel_id.upper()
+        
+        # جلب إعدادات القناة من الحالة
+        async with state.channel_settings_lock:
+            settings = state.channel_settings.get(int(channel_id), {})
+        
+        question_type = settings.get("question_type", "اختيارات")
+        auto_play = settings.get("auto_play", False)
+        
         await query.edit_message_text(
             f"**خيارات القناة: {channel_name}**\n\n"
-            f"نوع الأسئلة: 🔴 اختيارات\n"
-            f"اللعب التلقائي: 🔴 معطل",
-            reply_markup=keyboards.channel_options_menu(channel_name, "اختيارات", False)
+            f"نوع الأسئلة: {'🔴 اختيارات' if question_type == 'اختيارات' else '🔵 أسئلة'}\n"
+            f"اللعب التلقائي: {'🟢 مفعل' if auto_play else '🔴 معطل'}",
+            reply_markup=keyboards.channel_options_menu(channel_name, question_type, auto_play)
         )
         return True
 
     elif data == "manage_channels":
-        await query.edit_message_text(
-            "📋 **إدارة القنوات**\n\n"
-            "هذه الميزة قيد التطوير...",
-            reply_markup=keyboards.back_button()
-        )
+        async with state.channel_settings_lock:
+            channel_ids = list(state.channel_settings.keys())
+        text = "📋 **إدارة القنوات**\n\n"
+        if channel_ids:
+            for cid in channel_ids:
+                try:
+                    chat = await context.bot.get_chat(cid)
+                    text += f"- {chat.title} (ID: {cid})\n"
+                except:
+                    text += f"- قناة {cid}\n"
+        else:
+            text += "لا توجد قنوات مفعلة."
+        await query.edit_message_text(text, reply_markup=keyboards.back_button())
         return True
 
     elif data == "change_question_type":
         await query.edit_message_text(
             "🔄 **تغيير نوع الأسئلة**\n\n"
-            "هذه الميزة قيد التطوير...",
+            "اختر النوع الجديد:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔴 اختيارات", callback_data="set_question_type_choices")],
+                [InlineKeyboardButton("🔵 أسئلة مفتوحة", callback_data="set_question_type_open")],
+                [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
+            ])
+        )
+        return True
+
+    elif data.startswith("set_question_type_"):
+        q_type = data.split("_")[-1]
+        # تخزين النوع في سياق المستخدم
+        context.user_data["selected_question_type"] = q_type
+        await query.edit_message_text(
+            f"✅ تم اختيار نوع الأسئلة: {'🔴 اختيارات' if q_type == 'choices' else '🔵 أسئلة مفتوحة'}\n"
+            "اختر القناة لتفعيل الإعداد:",
             reply_markup=keyboards.back_button()
         )
         return True
 
     elif data == "create_game_now":
+        chat_id = context.user_data.get("selected_channel_id")
+        if not chat_id:
+            await query.edit_message_text(
+                "❌ لم يتم اختيار قناة!\n"
+                "اختر قناة أولاً من قائمة القنوات.",
+                reply_markup=keyboards.back_button()
+            )
+            return True
+        
+        # بدء لعبة في القناة
         await query.edit_message_text(
             "🎮 **تم إنشاء اللعبة!**\n\n"
             "اختر حركتك:",
@@ -183,6 +233,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return True
 
     elif data == "enable_auto_play":
+        chat_id = context.user_data.get("selected_channel_id")
+        if chat_id:
+            async with state.channel_settings_lock:
+                if chat_id not in state.channel_settings:
+                    state.channel_settings[chat_id] = {}
+                state.channel_settings[chat_id]["auto_play"] = True
+        
         await query.edit_message_text(
             "⚡ **تم تفعيل اللعب التلقائي!**\n\n"
             "سيتم إنشاء ألعاب تلقائياً في هذه القناة.",
@@ -191,6 +248,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return True
 
     elif data == "toggle_auto_play":
+        chat_id = context.user_data.get("selected_channel_id")
+        if chat_id:
+            async with state.channel_settings_lock:
+                if chat_id in state.channel_settings:
+                    current = state.channel_settings[chat_id].get("auto_play", False)
+                    state.channel_settings[chat_id]["auto_play"] = not current
+        
         await query.edit_message_text(
             "🔄 **تم تغيير حالة اللعب التلقائي!**",
             reply_markup=keyboards.back_button()
