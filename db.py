@@ -5,7 +5,6 @@ import random
 from datetime import datetime, date, timedelta
 import config
 
-# ✅ استخدام config.DB_NAME بدلاً من الاسم الثابت
 DB = config.DB_NAME
 
 def get_conn():
@@ -588,10 +587,11 @@ def get_top_boss_damagers():
     conn.close()
     return [dict(r) for r in rows]
 
-# ========== قدرات ==========
+# ========== قدرات (مع إصلاح SQL Injection) ==========
+VALID_ABILITIES = {"shield", "double_points", "reverse"}
+
 def get_ability_count(user_id, ability):
-    allowed_abilities = ['shield', 'double_points', 'reverse']
-    if ability not in allowed_abilities:
+    if ability not in VALID_ABILITIES:
         return 0
     conn = get_conn()
     row = conn.execute(f"SELECT {ability} FROM user_abilities WHERE user_id=?", (user_id,)).fetchone()
@@ -603,8 +603,7 @@ def get_ability_count(user_id, ability):
     return row[0] if row else 0
 
 def use_ability(user_id, ability):
-    allowed_abilities = ['shield', 'double_points', 'reverse']
-    if ability not in allowed_abilities:
+    if ability not in VALID_ABILITIES:
         return False
     conn = get_conn()
     count = conn.execute(f"SELECT {ability} FROM user_abilities WHERE user_id=?", (user_id,)).fetchone()
@@ -617,8 +616,7 @@ def use_ability(user_id, ability):
     return True
 
 def buy_ability(user_id, ability):
-    allowed_abilities = ['shield', 'double_points', 'reverse']
-    if ability not in allowed_abilities:
+    if ability not in VALID_ABILITIES:
         return False
     cost = config.ABILITIES[ability]["cost"]
     conn = get_conn()
@@ -721,7 +719,6 @@ def get_weekly_channel_leaderboard(chat_id, limit=10):
 
 # ========== دالة شراء العناصر (موحدة) ==========
 def buy_item(user_id, item_type, item_id):
-    """شراء أي عنصر من المتجر (بطاقة، لقب، ثيم، إطار، قدرة)"""
     conn = get_conn()
     u = conn.execute("SELECT points, gems, shop_items, theme, title FROM users WHERE user_id=?", (user_id,)).fetchone()
     if not u:
