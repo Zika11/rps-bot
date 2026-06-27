@@ -14,7 +14,7 @@ async def tournament_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     await query.answer()
     
-    # ✅ البحث عن بطولة مفتوحة أولاً
+    # ✅ البحث عن بطولة مفتوحة أولاً بدل إنشاء جديدة كل مرة
     conn = db.get_conn()
     row = conn.execute("SELECT tour_id FROM tournaments WHERE status='open' LIMIT 1").fetchone()
     conn.close()
@@ -41,6 +41,7 @@ async def join_tournament_handler(update: Update, context: ContextTypes.DEFAULT_
         tour = db.get_tournament(tour_id)
         players = json.loads(tour["players"] or "[]")
         if len(players) == 8:
+            # ✅ bracket يكون dict وليس list
             bracket = {
                 "round1": [
                     {"p1": players[0], "p2": players[1], "winner": None},
