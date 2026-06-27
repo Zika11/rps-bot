@@ -3,7 +3,10 @@ import logging
 import uuid
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-import db, config, keyboards, state
+import db
+import config
+import keyboards
+import state
 
 logger = logging.getLogger(__name__)
 
