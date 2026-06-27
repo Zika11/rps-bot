@@ -1,7 +1,7 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 # ============================================
-# القائمة الرئيسية (الجديدة)
+# القائمة الرئيسية
 # ============================================
 def main_menu(lang="ar"):
     """القائمة الرئيسية - زي الصورة"""
@@ -40,12 +40,14 @@ def main_menu(lang="ar"):
 # قائمة المزيد
 # ============================================
 def more_menu(lang="ar"):
-    """قائمة المزيد - زي الصورة"""
+    """قائمة المزيد"""
     if lang == "ar":
         btns = [
             ("📖 طريقة اللعب", "how_to_play"),
             ("💬 دعم البوت", "support"),
             ("⭐ تقييم البوت", "rate_bot"),
+            ("🎯 خمن الرقم", "guess_number"),
+            ("📝 أسئلة وأجوبة", "quiz"),
             ("🔙 رجوع للقائمة الرئيسية", "back_main")
         ]
     else:
@@ -53,6 +55,8 @@ def more_menu(lang="ar"):
             ("📖 How to Play", "how_to_play"),
             ("💬 Support", "support"),
             ("⭐ Rate Bot", "rate_bot"),
+            ("🎯 Guess Number", "guess_number"),
+            ("📝 Quiz", "quiz"),
             ("🔙 Back to Main", "back_main")
         ]
     keyboard = [[InlineKeyboardButton(text, callback_data=callback)] for text, callback in btns]
@@ -71,6 +75,8 @@ def game_mode_menu(lang="ar"):
             ("🆕 أنشئ غرفة", "create_room"),
             ("🔍 بحث عن ألعاب", "search_games"),
             ("🔍 بحث عن غرفة", "search_room"),
+            ("🎯 خمن الرقم", "guess_number"),
+            ("📝 أسئلة وأجوبة", "quiz"),
             ("🔙 رجوع", "back_main")
         ]
     else:
@@ -81,6 +87,8 @@ def game_mode_menu(lang="ar"):
             ("🆕 Create Room", "create_room"),
             ("🔍 Search Games", "search_games"),
             ("🔍 Search Room", "search_room"),
+            ("🎯 Guess Number", "guess_number"),
+            ("📝 Quiz", "quiz"),
             ("🔙 Back", "back_main")
         ]
     
@@ -344,7 +352,7 @@ def channel_main_menu(chat_id):
     ])
 
 # ============================================
-# أزرار أخرى (عجلة، بطولة، إلخ)
+# أزرار أخرى
 # ============================================
 def wheel_button():
     return InlineKeyboardMarkup([
@@ -438,3 +446,20 @@ def paginated_keyboard(items, page=0, items_per_page=5, callback_prefix="item"):
         buttons.append(nav)
     
     return InlineKeyboardMarkup(buttons)
+
+# ============================================
+# أزرار الألعاب الجديدة
+# ============================================
+def guess_number_buttons():
+    """أزرار لعبة خمن الرقم"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎯 خمن الرقم", callback_data="guess_number")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
+    ])
+
+def quiz_buttons():
+    """أزرار لعبة الأسئلة"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 أسئلة وأجوبة", callback_data="quiz")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
+    ])
